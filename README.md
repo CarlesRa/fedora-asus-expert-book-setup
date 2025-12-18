@@ -278,6 +278,116 @@ podman exec ollama ollama pull llama3.2:1b-q4_0
 
 ---
 
+# 🔋 Battery Health & Power Management (Asusctl)
+
+This section covers the installation of **asusctl**, a specialized utility for Asus laptops that enables power profile switching and, most importantly, battery charge limiting to extend hardware lifespan.
+
+---
+
+## 📦 Install Asus Utilities
+
+Enable the specialized Asus Linux COPR repository and install the necessary tools for system control:
+
+### For Fedora
+
+```bash
+# Add the COPR repository
+sudo dnf copr enable lukenukem/asus-linux
+
+# Install asusctl
+sudo dnf install asusctl
+
+# Enable and start the service
+sudo systemctl enable --now asusd.service
+```
+
+### For Arch Linux / Manjaro
+
+```bash
+# Install from AUR
+yay -S asusctl
+
+# Enable services
+sudo systemctl enable --now power-profiles-daemon.service
+sudo systemctl enable --now asusd.service
+```
+
+### For Ubuntu / Debian
+
+```bash
+# Add repository
+echo "deb [signed-by=/usr/share/keyrings/asus-linux.gpg] https://asus-linux.org/debian $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/asus-linux.list
+sudo mkdir -p /usr/share/keyrings
+wget -qO- https://asus-linux.org/debian/asus-linux.gpg.key | sudo gpg --dearmor -o /usr/share/keyrings/asus-linux.gpg
+
+# Install
+sudo apt update
+sudo apt install asusctl
+sudo systemctl enable --now asusd.service
+```
+
+---
+
+## ⚙️ Basic Configuration
+
+### Performance Profiles
+
+Asusctl allows switching between different profiles to optimize performance or battery life:
+
+```bash
+# List available profiles
+asusctl profile -l
+
+# Switch to quiet mode (power saving)
+asusctl profile -P Quiet
+
+# Switch to balanced mode
+asusctl profile -P Balanced
+
+# Switch to performance mode
+asusctl profile -P Performance
+```
+
+### 🔌 Battery Charge Limiting
+
+One of the most important features for battery longevity is limiting the maximum charge level:
+
+```bash
+# Limit charge to 80% (recommended for daily use)
+asusctl -c 80
+
+# Limit charge to 60% (optimal if always plugged in)
+asusctl -c 60
+
+# Full charge to 100% (only when you need maximum autonomy)
+asusctl -c 100
+```
+
+### 📊 Check Status
+
+```bash
+# View current configuration
+asusctl -s
+
+# Complete system information
+asusctl --help
+```
+
+---
+
+## 💡 Tips to Maximize Battery Life
+
+- **Daily use while plugged in**: Limit charge to 60-80%
+- **Frequent mobile use**: Keep between 80-90%
+- **Long trips**: Charge to 100% only when necessary
+- **Long-term storage**: Leave battery at 50-60%
+
+---
+
+## 🎯 Result
+
+With asusctl configured, you'll have complete control over the performance and battery health of your ASUS ExpertBook, significantly extending its lifespan.
+
 ## 📚 Additional Resources
 
 * [Ollama Documentation](https://github.com/ollama/ollama/blob/main/README.md)
