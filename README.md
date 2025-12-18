@@ -1,45 +1,41 @@
 # Linux Asus ExpertBook Setup
-
 **Target device:** Asus ExpertBook (Intel Core Ultra)
 
 This repository documents an evolving set of **Linux laptop configurations and experiments**, currently tested on an **Asus ExpertBook** running **Fedora 43**. It will be updated over time as new features, tweaks, and workflows are added, with a focus on:
-
 * 🔐 **Biometric authentication** using the Infrared (IR) camera (FaceID via Howdy)
-* 🧠 **Local AI inference** accelerated by Intel NPU (Intel AI Boost) using OpenVINO
+* 🧠 **Local AI inference** using Ollama with Intel GPU acceleration
+* 🐳 **Containerized deployments** via Podman for minimal system impact
 
 The goal is a clean, reproducible setup suitable for daily use on a modern Linux laptop.
 
 ---
 
 ## 💻 Hardware Specifications
-
-* **Device:** Asus ExpertBook
-* **CPU:** Intel Core Ultra 7 255H (Lunar Lake / Arrow Lake)
-* **GPU / NPU:** Intel Arc Graphics & Intel AI Boost (NPU)
+* **Device:** Asus ExpertBook B5405CCA
+* **CPU:** Intel Core Ultra 7 255H (Arrow Lake-P, 16 cores @ 5.10 GHz)
+* **GPU:** Intel Graphics (Arrow Lake-P integrated GPU @ 2.25 GHz)
+* **NPU:** Intel AI Boost (Neural Processing Unit)
+* **RAM:** 32 GB
+* **Storage:** 1 TB NVMe SSD (btrfs)
 * **Operating System:** Fedora 43 (Workstation Edition)
+* **Desktop Environment:** GNOME 49.2 (Wayland)
 
 ---
 
 ## 🎭 1. FaceID Integration (Howdy)
-
 This section explains how to enable biometric authentication using the built-in **Infrared (IR) camera**.
 
 ### 1.1 Identify the IR Camera Device
-
 First, determine which `/dev/video*` node corresponds to the IR camera. You can use either `guvcview` or `v4l-utils`.
-
 ```bash
 sudo dnf install guvcview
 ```
-
 Test the available video devices (commonly `/dev/video2` or `/dev/video3`) and identify the one that activates the **red IR LEDs**.
 
 ---
 
 ### 1.2 Install Howdy
-
 Enable the COPR repository and install Howdy:
-
 ```bash
 sudo dnf copr enable principalis/howdy
 sudo dnf install howdy
@@ -48,9 +44,7 @@ sudo dnf install howdy
 ---
 
 ### 1.3 Configure Howdy
-
 Edit the configuration file and set the correct device path:
-
 ```ini
 # /lib64/security/howdy/config.ini
 device_path = /dev/video2  # Replace with your identified IR camera node
@@ -59,27 +53,20 @@ device_path = /dev/video2  # Replace with your identified IR camera node
 ---
 
 ### 1.4 Enroll Your Face
-
 Add your face to Howdy:
-
 ```bash
 sudo howdy add
 ```
-
 Follow the on-screen instructions to complete enrollment.
 
 ---
 
 ### 1.5 PAM Integration (Login & Sudo)
-
 To enable FaceID for system login and sudo authentication, add the following line **at the top** of these files:
-
 ```text
 auth sufficient pam_howdy.so
 ```
-
 Files to modify:
-
 * `/etc/pam.d/system-auth`
 * `/etc/pam.d/gnome-screensaver`
 
@@ -87,85 +74,220 @@ Files to modify:
 
 ---
 
-## 🧠 2. Local AI with NPU Acceleration (Intel OpenVINO)
+## 🧠 2. Local AI with Ollama (Intel GPU Acceleration)
 
-To run Large Language Models (LLMs) efficiently without excessive power consumption, we leverage the **Intel NPU** via **OpenVINO** and **Podman**.
-
----
+This setup runs **Ollama** in a Podman container with Intel GPU acceleration for local LLM inference. The deployment is **non-invasive** - everything runs containerized with minimal host system modifications.
 
 ### 2.1 Prerequisites
 
-Verify that the Intel VPU driver is loaded:
-
+Verify Intel GPU access:
 ```bash
-lsmod | grep intel_vpu
+# Check DRI devices (GPU access)
+ls -la /dev/dri/
+# Should show card0/card1 and renderD128
+
+# Verify Intel GPU is detected
+lspci | grep -i vga
+# Should show: Intel Corporation Arrow Lake-P [Intel Graphics]
 ```
 
-If the module is present, the NPU is available.
+**Optional monitoring tools:**
+```bash
+sudo dnf install intel-gpu-tools  # For intel_gpu_top monitoring
+```
 
 ---
 
-### 2.2 Deploy Ollama with Intel Acceleration
+### 2.2 Deploy Ollama with Podman
 
-We use **Podman** to keep the host system clean and to access hardware acceleration via `/dev/dri`.
-
+#### Create storage for models
 ```bash
+# Option 1: Using a local directory
+mkdir -p ~/ollama-models
+
+# Option 2: Using a Podman volume (recommended for SELinux)
+podman volume create ollama-data
+```
+
+#### Run Ollama container with GPU access
+```bash
+# Using local directory (with SELinux label)
 podman run -d \
-  --name ollama-intel \
-  --device /dev/dri:/dev/dri \
+  --name ollama \
+  --device /dev/dri/card1:/dev/dri/card1 \
+  --device /dev/dri/renderD128:/dev/dri/renderD128 \
+  -v ~/ollama-models:/root/.ollama:Z \
   -p 11434:11434 \
-  -v ollama_data:/root/.ollama \
-  docker.io/intel/ollama:latest
+  docker.io/ollama/ollama:latest
+
+# OR using Podman volume
+podman run -d \
+  --name ollama \
+  --device /dev/dri/card1:/dev/dri/card1 \
+  --device /dev/dri/renderD128:/dev/dri/renderD128 \
+  -v ollama-data:/root/.ollama \
+  -p 11434:11434 \
+  docker.io/ollama/ollama:latest
 ```
 
-This setup enables GPU/NPU-backed inference while keeping everything containerized.
+> **Note:** The `:Z` flag is important for SELinux contexts. Using Podman volumes avoids permission issues entirely.
 
 ---
 
-### 2.3 Monitoring Hardware Acceleration
-
-To confirm that workloads are running on the GPU/NPU instead of the CPU:
-
+### 2.3 Download and Run Models
 ```bash
-sudo dnf install intel-gpu-tools
-sudo intel_gpu_top
+# Pull a model (1B parameter model, ~700MB)
+podman exec ollama ollama pull llama3.2:1b
+
+# Run interactive chat
+podman exec -it ollama ollama run llama3.2:1b
+
+# List downloaded models
+podman exec ollama ollama list
+
+# Exit chat with: /bye
 ```
 
-Look for activity in:
+**Recommended models for testing:**
+* `llama3.2:1b` - Smallest, fastest (700MB)
+* `tinyllama:1.1b` - Very fast, less capable (637MB)
+* `llama3.2:3b` - Better quality, slower (~2GB)
+* `phi3:mini` - Optimized for Intel hardware
 
-* **Compute engines**
-* **NPU-related metrics** (if available)
+---
+
+### 2.4 Using Ollama via API
+```bash
+# Generate text via HTTP API
+curl http://localhost:11434/api/generate -d '{
+  "model": "llama3.2:1b",
+  "prompt": "Explain quantum computing in simple terms",
+  "stream": false
+}'
+
+# List available models via API
+curl http://localhost:11434/api/tags
+```
+
+---
+
+### 2.5 Monitoring GPU Usage
+```bash
+# Monitor Intel GPU activity in real-time
+sudo intel_gpu_top
+
+# Watch container resource usage
+podman stats ollama
+```
+
+During inference, you should see activity in:
+* **Render/3D engine** - GPU compute workload
+* **Compute engine** - Additional acceleration
+
+---
+
+### 2.6 Container Management
+```bash
+# Stop Ollama
+podman stop ollama
+
+# Start Ollama
+podman start ollama
+
+# Remove container (keeps models if using volume)
+podman rm ollama
+
+# Remove downloaded models
+podman exec ollama ollama rm llama3.2:1b
+
+# View logs
+podman logs ollama
+```
+
+---
+
+### 2.7 Current Limitations & Future
+
+**Current state (December 2024):**
+* ✅ Intel **iGPU acceleration** works well
+* ⚠️ Intel **NPU support** in Linux is still maturing
+* ⚠️ Inference speed is moderate (acceptable for privacy-focused use cases)
+* ✅ Fully containerized, zero host system pollution
+
+**Expected improvements (2025-2026):**
+* Native NPU drivers and OpenVINO integration
+* Faster inference with dedicated NPU acceleration
+* Better model optimization for Intel AI Boost
+
+**Use cases where local AI excels:**
+* 🔒 Complete privacy (offline, no cloud)
+* 📡 Offline operation
+* 🆓 Zero API costs after initial setup
+* 🧪 Experimentation with fine-tuning, RAG, embeddings
 
 ---
 
 ## 🛠 Troubleshooting
 
-### SELinux Issues
-
+### SELinux Issues with Howdy
 If Howdy fails to activate the camera during login, SELinux may be blocking access.
 
 For testing purposes:
-
 ```bash
 sudo setenforce 0
 ```
-
 For a permanent solution, generate and apply a custom SELinux policy instead of disabling enforcement.
 
 ---
 
+### Podman Permission Errors
+If you encounter `permission denied` errors with volumes:
+```bash
+# Option 1: Add :Z flag for SELinux labeling
+-v ~/ollama-models:/root/.ollama:Z
+
+# Option 2: Use Podman volumes (recommended)
+podman volume create ollama-data
+-v ollama-data:/root/.ollama
+
+# Option 3: Adjust directory permissions (less secure)
+chmod 777 ~/ollama-models
+```
+
+---
+
 ### FUSE Errors (AppImages)
-
 Fedora 43 requires additional libraries to run AppImages (e.g. LM Studio):
-
 ```bash
 sudo dnf install fuse-libs
 ```
 
 ---
 
-## ✍️ Author
+### Slow AI Inference
+Factors affecting performance:
+* **Model size** - Smaller models (1B-3B params) are faster
+* **Quantization** - Q4/Q8 models trade quality for speed
+* **GPU frequency** - Check if GPU is throttled (thermal/power limits)
+* **System load** - Background processes competing for resources
 
+Try lighter models or quantized versions:
+```bash
+podman exec ollama ollama pull llama3.2:1b-q4_0
+```
+
+---
+
+## 📚 Additional Resources
+
+* [Ollama Documentation](https://github.com/ollama/ollama/blob/main/README.md)
+* [Intel GPU Tools](https://gitlab.freedesktop.org/drm/igt-gpu-tools)
+* [Howdy Project](https://github.com/boltgolt/howdy)
+* [Podman Documentation](https://docs.podman.io/)
+
+---
+
+## ✍️ Author
 **Juan Carlos Ramos Moll (CarlesRa)**
 
 ---
