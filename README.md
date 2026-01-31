@@ -14,7 +14,7 @@ A curated, evolving guide for configuring **Linux on the Asus ExpertBook**, test
 
 | Component   | Details                                             |
 | ----------- | --------------------------------------------------- |
-| **Device**  | Asus ExpertBook **B5405CCA**                        |
+| **Device**  | Asus ExpertBook B5405CCA                            |
 | **CPU**     | Intel Core Ultra 7 (Arrow Lake‑P)                   |
 | **GPU**     | Intel Integrated Graphics (Arrow Lake‑P @ 2.25 GHz) |
 | **NPU**     | Intel AI Boost (Neural Processing Unit)             |
@@ -31,7 +31,7 @@ Leverage **Arrow Lake media acceleration** to offload video decoding (YouTube, s
 
 ### 1.1 Enable RPM Fusion Repositories
 
-Required for non‑free codecs and Intel media drivers.
+Fedora requires RPM Fusion for non‑free codecs and Intel media drivers.
 
 ```bash
 sudo dnf install \
@@ -41,7 +41,7 @@ sudo dnf install \
 
 ### 1.2 Video Acceleration Drivers (VA‑API)
 
-Install the modern **Intel Media Driver** supporting **H.264, HEVC, VP9, and AV1**.
+Install the modern **Intel Media Driver**, supporting **H.264, HEVC, VP9, and AV1**.
 
 ```bash
 sudo dnf install intel-media-driver libva-utils
@@ -53,9 +53,7 @@ sudo dnf install intel-media-driver libva-utils
 vainfo
 ```
 
-You should see multiple `VAEntrypointVLD` entries, including:
-
-* `VAProfileAV1Profile0`
+You should see `VAProfileAV1Profile0` among the available profiles.
 
 ---
 
@@ -72,34 +70,52 @@ sudo dnf install distrobox
 ### 2.2 Example: Angular Development Box
 
 ```bash
-# Create a Fedora 43 container
+# Create and enter the container
 distrobox create --name dev-angular --image fedora:43
-
-# Enter the box and install tooling
 distrobox enter dev-angular
+
+# Install tooling inside the box
 sudo dnf install nodejs npm git -y
 sudo npm install -g @angular/cli
 ```
 
-### 2.3 VS Code Integration
+### 2.3 VS Code Integration ("The Magic Bridge")
 
-1. Install **VS Code (RPM)** on the host
-2. Open your project folder normally
-3. In the integrated terminal, run:
+Open **VS Code (installed on the host)** directly from inside the container using `code .`.
 
 ```bash
-distrobox enter dev-angular
+# Inside the distrobox
+echo 'alias code="distrobox-host-exec code"' >> ~/.bashrc
+source ~/.bashrc
 ```
 
-✨ **Result:** Native UI performance + fully isolated toolchains
+✨ **Result:** Run `code .` from any containerized project folder while keeping binaries and tooling fully isolated.
 
 ---
 
-## 🔋 3. Power & Battery Management (asusctl)
+## 🚀 3. Infrastructure & Services (Podman Compose)
 
-Unlock Asus‑specific features such as performance profiles and battery protection.
+Use a **hybrid model**: compilers and SDKs inside Distrobox, long‑running services on the host via Podman Compose.
 
-### 3.1 Installation
+| Layer          | Technology     | Purpose                            |
+| -------------- | -------------- | ---------------------------------- |
+| Coding / Build | Distrobox      | Angular, Node.js, Spring Boot, JDK |
+| Infrastructure | Podman Compose | PostgreSQL, Redis, SonarQube       |
+
+### Start Services (Host)
+
+```bash
+sudo dnf install podman-compose
+podman-compose up -d
+```
+
+---
+
+## 🔋 4. Power & Battery Management (asusctl)
+
+Unlock Asus‑specific firmware features and battery protection.
+
+### 4.1 Installation
 
 ```bash
 sudo dnf copr enable lukenukem/asus-linux
@@ -107,31 +123,21 @@ sudo dnf install asusctl
 sudo systemctl enable --now asusd.service
 ```
 
-### 3.2 Battery Charge Limiting
+### 4.2 Battery Charge Limiting
 
-Limit maximum charge to extend battery lifespan (recommended for docked laptops).
+Limit maximum charge to preserve battery health (recommended for docked laptops).
 
 ```bash
 # Limit charge to 60%
 asusctl -c 60
 ```
 
-### 3.3 Performance Profiles
-
-```bash
-# Show active profile
-asusctl profile get
-
-# Cycle profiles (Performance / Balanced / Quiet)
-asusctl profile -n
-```
-
 ---
 
-## 🔐 4. Biometrics & Authentication
+## 🔐 5. Biometrics & Authentication
 
 * **Fingerprint Sensor**
-  Supported natively via **Settings → Users** in Fedora 43
+  Native support via **Settings → Users**
 
 * **Face Recognition (Howdy – Optional)**
   Enable IR camera authentication
@@ -143,9 +149,9 @@ sudo dnf install howdy
 
 ---
 
-## 🧠 5. Local AI with Ollama (Intel iGPU)
+## 🧠 6. Local AI with Ollama (Intel iGPU)
 
-Run local LLMs using **Intel GPU acceleration** inside a Podman container.
+Run local LLMs using **Intel GPU acceleration** via Podman.
 
 ```bash
 podman run -d \
@@ -158,7 +164,7 @@ podman run -d \
 
 ---
 
-## ⌨️ 6. Peripherals (Logitech MX Keys)
+## ⌨️ 7. Peripherals (Logitech MX Keys)
 
 Manage Logitech device pairing and battery levels.
 
@@ -175,13 +181,13 @@ GitHub: **@CarlesRa**
 
 ---
 
-## 🗓️ Recent Changes (January 2026)
+## 🗓️ Recent Changes (January 2026)
 
 * ✅ VA‑API configured with **AV1** support for Arrow Lake
-* ✅ Distrobox workflow implemented for **Angular development**
-* ✅ Battery charge threshold set to **60%** via `asusctl`
-* ✅ Fedora 43 hardware compatibility fully verified
+* ✅ Integrated VS Code `host-exec` alias for seamless containerized development
+* ✅ Hybrid workflow established: **Distrobox (Apps)** + **Podman Compose (Infrastructure)**
+* ✅ Battery charge threshold set to **60%** for long‑term health
 
 ---
 
-⭐ *If this setup helps you, consider starring the repo or adapting it to your own hardware!*
+⭐ *If this setup helps you, consider starring the repository!*
