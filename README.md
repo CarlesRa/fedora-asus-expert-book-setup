@@ -1,405 +1,136 @@
-# Linux Asus ExpertBook Setup
-**Target device:** Asus ExpertBook (Intel Core Ultra)
+Perfect. Here is the updated README.md in English, incorporating all the optimizations we’ve implemented for your ASUS ExpertBook, including the GPU acceleration, Distrobox workflow, and battery health management.
+Linux Asus ExpertBook Setup
 
-This repository documents an evolving set of **Linux laptop configurations and experiments**, currently tested on an **Asus ExpertBook** running **Fedora 43**. It will be updated over time as new features, tweaks, and workflows are added, with a focus on:
-* 🔐 **Biometric authentication** using the Infrared (IR) camera (FaceID via Howdy)
-* 🧠 **Local AI inference** using Ollama with Intel GPU acceleration
-* 🐳 **Containerized deployments** via Podman for minimal system impact
+Target device: Asus ExpertBook (Intel Core Ultra)
 
-The goal is a clean, reproducible setup suitable for daily use on a modern Linux laptop.
+This repository documents an evolving set of Linux laptop configurations and experiments, currently tested on an Asus ExpertBook running Fedora 43. The setup focuses on balancing high performance, hardware longevity, and a clean development workflow.
+💻 Hardware Specifications
 
----
+    Device: Asus ExpertBook B5405CCA
 
-## 💻 Hardware Specifications
-* **Device:** Asus ExpertBook B5405CCA
-* **CPU:** Intel Core Ultra 7 255H (Arrow Lake-P, 16 cores @ 5.10 GHz)
-* **GPU:** Intel Graphics (Arrow Lake-P integrated GPU @ 2.25 GHz)
-* **NPU:** Intel AI Boost (Neural Processing Unit)
-* **RAM:** 32 GB
-* **Storage:** 1 TB NVMe SSD (btrfs)
-* **Operating System:** Fedora 43 (Workstation Edition)
-* **Desktop Environment:** GNOME 49.2 (Wayland)
+    CPU: Intel Core Ultra 7 (Arrow Lake-P)
 
----
+    GPU: Intel Graphics (Integrated Arrow Lake-P GPU @ 2.25 GHz)
 
-## 🎭 1. FaceID Integration (Howdy)
-This section explains how to enable biometric authentication using the built-in **Infrared (IR) camera**.
+    NPU: Intel AI Boost (Neural Processing Unit)
 
-### 1.1 Identify the IR Camera Device
-First, determine which `/dev/video*` node corresponds to the IR camera. You can use either `guvcview` or `v4l-utils`.
-```bash
-sudo dnf install guvcview
-```
-Test the available video devices (commonly `/dev/video2` or `/dev/video3`) and identify the one that activates the **red IR LEDs**.
+    RAM: 32 GB
 
----
+    Storage: 1 TB NVMe SSD (btrfs)
 
-### 1.2 Install Howdy
-Enable the COPR repository and install Howdy:
-```bash
-sudo dnf copr enable principalis/howdy
-sudo dnf install howdy
-```
+    Operating System: Fedora 43 (Workstation Edition)
 
----
+    Desktop Environment: GNOME 49 (Wayland)
 
-### 1.3 Configure Howdy
-Edit the configuration file and set the correct device path:
-```ini
-# /lib64/security/howdy/config.ini
-device_path = /dev/video2  # Replace with your identified IR camera node
-```
+⚡ 1. GPU & Multimedia Optimization
 
----
+To leverage the Arrow Lake architecture for hardware-accelerated video decoding (YouTube, streaming, etc.), reducing CPU load and heat.
+1.1 Enable RPM Fusion Repositories
 
-### 1.4 Enroll Your Face
-Add your face to Howdy:
-```bash
-sudo howdy add
-```
-Follow the on-screen instructions to complete enrollment.
+Fedora requires these for non-free codecs and drivers.
+Bash
 
----
+sudo dnf install https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-$(rpm -E %fedora).noarch.rpm https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-$(rpm -E %fedora).noarch.rpm
 
-### 1.5 PAM Integration (Login & Sudo)
-To enable FaceID for system login and sudo authentication, add the following line **at the top** of these files:
-```text
-auth sufficient pam_howdy.so
-```
-Files to modify:
-* `/etc/pam.d/system-auth`
-* `/etc/pam.d/gnome-screensaver`
+1.2 Video Acceleration Drivers (VA-API)
 
-> ⚠️ **Note:** Incorrect PAM configuration can lock you out of your system. Make sure you have a fallback TTY or SSH access before proceeding.
+Install the modern Intel Media Driver for hardware decoding/encoding (H.264, HEVC, VP9, and AV1).
+Bash
 
----
+sudo dnf install intel-media-driver libva-utils
 
-## 🧠 2. Local AI with Ollama (Intel GPU Acceleration)
+Verification: Run vainfo. You should see several VAEntrypointVLD entries, including VAProfileAV1Profile0.
+📦 2. Development Workflow (Distrobox)
 
-This setup runs **Ollama** in a Podman container with Intel GPU acceleration for local LLM inference. The deployment is **non-invasive** - everything runs containerized with minimal host system modifications.
+Instead of polluting the host system with multiple language runtimes, we use Distrobox to create isolated environments that share the $HOME directory.
+2.1 Installation
+Bash
 
-### 2.1 Prerequisites
+sudo dnf install distrobox
 
-Verify Intel GPU access:
-```bash
-# Check DRI devices (GPU access)
-ls -la /dev/dri/
-# Should show card0/card1 and renderD128
+2.2 Example: Angular Development Box
+Bash
 
-# Verify Intel GPU is detected
-lspci | grep -i vga
-# Should show: Intel Corporation Arrow Lake-P [Intel Graphics]
-```
+# Create a Fedora 43 container
+distrobox create --name dev-angular --image fedora:43
 
-**Optional monitoring tools:**
-```bash
-sudo dnf install intel-gpu-tools  # For intel_gpu_top monitoring
-```
+# Enter the box and install tools
+distrobox enter dev-angular
+sudo dnf install nodejs npm git -y
+sudo npm install -g @angular/cli
 
----
+2.3 VS Code Integration
 
-### 2.2 Deploy Ollama with Podman
+    Install VS Code (RPM) on the host.
 
-#### Create storage for models
-```bash
-# Option 1: Using a local directory
-mkdir -p ~/ollama-models
+    Open your project folder normally.
 
-# Option 2: Using a Podman volume (recommended for SELinux)
-podman volume create ollama-data
-```
+    Use the integrated terminal and type distrobox enter dev-angular.
 
-#### Run Ollama container with GPU access
-```bash
-# Using local directory (with SELinux label)
+    Benefit: Host UI speed + Isolated container binaries.
+
+🔋 3. Power & Battery Management (asusctl)
+
+Essential for Asus-specific hardware features.
+3.1 Installation
+Bash
+
+sudo dnf copr enable lukenukem/asus-linux
+sudo dnf install asusctl
+sudo systemctl enable --now asusd.service
+
+3.2 Battery Charge Limiting
+
+Protect your battery lifespan by limiting the maximum charge (ideal for workstations always plugged in).
+Bash
+
+# Limit charge to 60%
+asusctl -c 60
+
+3.3 Performance Profiles
+
+    Get active profile: asusctl profile get
+
+    Switch/Cycle profiles: asusctl profile -n (Performance, Balanced, Quiet)
+
+🔐 4. Biometrics & Authentication
+
+    Fingerprint Sensor: Native support in Fedora 43 via Settings > Users.
+
+    FaceID (Howdy): Enable IR camera authentication (Optional).
+    Bash
+
+    sudo dnf copr enable principalis/howdy
+    sudo dnf install howdy
+
+🧠 5. Local AI with Ollama (Intel GPU)
+
+Run local LLMs inside a Podman container using iGPU acceleration.
+Bash
+
 podman run -d \
   --name ollama \
-  --device /dev/dri/card1:/dev/dri/card1 \
-  --device /dev/dri/renderD128:/dev/dri/renderD128 \
-  -v ~/ollama-models:/root/.ollama:Z \
-  -p 11434:11434 \
-  docker.io/ollama/ollama:latest
-
-# OR using Podman volume
-podman run -d \
-  --name ollama \
-  --device /dev/dri/card1:/dev/dri/card1 \
   --device /dev/dri/renderD128:/dev/dri/renderD128 \
   -v ollama-data:/root/.ollama \
   -p 11434:11434 \
   docker.io/ollama/ollama:latest
-```
 
-> **Note:** The `:Z` flag is important for SELinux contexts. Using Podman volumes avoids permission issues entirely.
+⌨️ 6. Peripherals (Logitech MX Keys)
 
----
+Manage battery levels and pairing for Logitech devices.
+Bash
 
-### 2.3 Download and Run Models
-```bash
-# Pull a model (1B parameter model, ~700MB)
-podman exec ollama ollama pull llama3.2:1b
+sudo dnf install solaar
 
-# Run interactive chat
-podman exec -it ollama ollama run llama3.2:1b
+✍️ Author
 
-# List downloaded models
-podman exec ollama ollama list
+Juan Carlos Ramos Moll (CarlesRa)
+Recent Changes (January 2026):
 
-# Exit chat with: /bye
-```
+    ✅ Configured VA-API with AV1 support for Arrow Lake.
 
-**Recommended models for testing:**
-* `llama3.2:1b` - Smallest, fastest (700MB)
-* `tinyllama:1.1b` - Very fast, less capable (637MB)
-* `llama3.2:3b` - Better quality, slower (~2GB)
-* `phi3:mini` - Optimized for Intel hardware
+    ✅ Implemented Distrobox workflow for Angular development.
 
----
+    ✅ Set battery charge threshold to 60% via asusctl.
 
-### 2.4 Using Ollama via API
-```bash
-# Generate text via HTTP API
-curl http://localhost:11434/api/generate -d '{
-  "model": "llama3.2:1b",
-  "prompt": "Explain quantum computing in simple terms",
-  "stream": false
-}'
-
-# List available models via API
-curl http://localhost:11434/api/tags
-```
-
----
-
-### 2.5 Monitoring GPU Usage
-```bash
-# Monitor Intel GPU activity in real-time
-sudo intel_gpu_top
-
-# Watch container resource usage
-podman stats ollama
-```
-
-During inference, you should see activity in:
-* **Render/3D engine** - GPU compute workload
-* **Compute engine** - Additional acceleration
-
----
-
-### 2.6 Container Management
-```bash
-# Stop Ollama
-podman stop ollama
-
-# Start Ollama
-podman start ollama
-
-# Remove container (keeps models if using volume)
-podman rm ollama
-
-# Remove downloaded models
-podman exec ollama ollama rm llama3.2:1b
-
-# View logs
-podman logs ollama
-```
-
----
-
-### 2.7 Current Limitations & Future
-
-**Current state (December 2024):**
-* ✅ Intel **iGPU acceleration** works well
-* ⚠️ Intel **NPU support** in Linux is still maturing
-* ⚠️ Inference speed is moderate (acceptable for privacy-focused use cases)
-* ✅ Fully containerized, zero host system pollution
-
-**Expected improvements (2025-2026):**
-* Native NPU drivers and OpenVINO integration
-* Faster inference with dedicated NPU acceleration
-* Better model optimization for Intel AI Boost
-
-**Use cases where local AI excels:**
-* 🔒 Complete privacy (offline, no cloud)
-* 📡 Offline operation
-* 🆓 Zero API costs after initial setup
-* 🧪 Experimentation with fine-tuning, RAG, embeddings
-
----
-
-## 🛠 Troubleshooting
-
-### SELinux Issues with Howdy
-If Howdy fails to activate the camera during login, SELinux may be blocking access.
-
-For testing purposes:
-```bash
-sudo setenforce 0
-```
-For a permanent solution, generate and apply a custom SELinux policy instead of disabling enforcement.
-
----
-
-### Podman Permission Errors
-If you encounter `permission denied` errors with volumes:
-```bash
-# Option 1: Add :Z flag for SELinux labeling
--v ~/ollama-models:/root/.ollama:Z
-
-# Option 2: Use Podman volumes (recommended)
-podman volume create ollama-data
--v ollama-data:/root/.ollama
-
-# Option 3: Adjust directory permissions (less secure)
-chmod 777 ~/ollama-models
-```
-
----
-
-### FUSE Errors (AppImages)
-Fedora 43 requires additional libraries to run AppImages (e.g. LM Studio):
-```bash
-sudo dnf install fuse-libs
-```
-
----
-
-### Slow AI Inference
-Factors affecting performance:
-* **Model size** - Smaller models (1B-3B params) are faster
-* **Quantization** - Q4/Q8 models trade quality for speed
-* **GPU frequency** - Check if GPU is throttled (thermal/power limits)
-* **System load** - Background processes competing for resources
-
-Try lighter models or quantized versions:
-```bash
-podman exec ollama ollama pull llama3.2:1b-q4_0
-```
-
----
-
-# 🔋 Battery Health & Power Management (Asusctl)
-
-This section covers the installation of **asusctl**, a specialized utility for Asus laptops that enables power profile switching and, most importantly, battery charge limiting to extend hardware lifespan.
-
----
-
-## 📦 Install Asus Utilities
-
-Enable the specialized Asus Linux COPR repository and install the necessary tools for system control:
-
-### For Fedora
-
-```bash
-# Add the COPR repository
-sudo dnf copr enable lukenukem/asus-linux
-
-# Install asusctl
-sudo dnf install asusctl
-
-# Enable and start the service
-sudo systemctl enable --now asusd.service
-```
-
-### For Arch Linux / Manjaro
-
-```bash
-# Install from AUR
-yay -S asusctl
-
-# Enable services
-sudo systemctl enable --now power-profiles-daemon.service
-sudo systemctl enable --now asusd.service
-```
-
-### For Ubuntu / Debian
-
-```bash
-# Add repository
-echo "deb [signed-by=/usr/share/keyrings/asus-linux.gpg] https://asus-linux.org/debian $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/asus-linux.list
-sudo mkdir -p /usr/share/keyrings
-wget -qO- https://asus-linux.org/debian/asus-linux.gpg.key | sudo gpg --dearmor -o /usr/share/keyrings/asus-linux.gpg
-
-# Install
-sudo apt update
-sudo apt install asusctl
-sudo systemctl enable --now asusd.service
-```
-
----
-
-## ⚙️ Basic Configuration
-
-### Performance Profiles
-
-Asusctl allows switching between different profiles to optimize performance or battery life:
-
-```bash
-# List available profiles
-asusctl profile -l
-
-# Switch to quiet mode (power saving)
-asusctl profile -P Quiet
-
-# Switch to balanced mode
-asusctl profile -P Balanced
-
-# Switch to performance mode
-asusctl profile -P Performance
-```
-
-### 🔌 Battery Charge Limiting
-
-One of the most important features for battery longevity is limiting the maximum charge level:
-
-```bash
-# Limit charge to 80% (recommended for daily use)
-asusctl -c 80
-
-# Limit charge to 60% (optimal if always plugged in)
-asusctl -c 60
-
-# Full charge to 100% (only when you need maximum autonomy)
-asusctl -c 100
-```
-
-### 📊 Check Status
-
-```bash
-# View current configuration
-asusctl -s
-
-# Complete system information
-asusctl --help
-```
-
----
-
-## 💡 Tips to Maximize Battery Life
-
-- **Daily use while plugged in**: Limit charge to 60-80%
-- **Frequent mobile use**: Keep between 80-90%
-- **Long trips**: Charge to 100% only when necessary
-- **Long-term storage**: Leave battery at 50-60%
-
----
-
-## 🎯 Result
-
-With asusctl configured, you'll have complete control over the performance and battery health of your ASUS ExpertBook, significantly extending its lifespan.
-
-## 📚 Additional Resources
-
-* [Ollama Documentation](https://github.com/ollama/ollama/blob/main/README.md)
-* [Intel GPU Tools](https://gitlab.freedesktop.org/drm/igt-gpu-tools)
-* [Howdy Project](https://github.com/boltgolt/howdy)
-* [Podman Documentation](https://docs.podman.io/)
-
----
-
-## ✍️ Author
-**Juan Carlos Ramos Moll (CarlesRa)**
-
----
-
-⭐ If this repository helped you, consider starring it and contributing improvements.
+    ✅ Verified Fedora 43 native hardware compatibility.
