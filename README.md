@@ -1,136 +1,187 @@
-Perfect. Here is the updated README.md in English, incorporating all the optimizations we’ve implemented for your ASUS ExpertBook, including the GPU acceleration, Distrobox workflow, and battery health management.
-Linux Asus ExpertBook Setup
+# 🐧 Linux Asus ExpertBook Setup
 
-Target device: Asus ExpertBook (Intel Core Ultra)
+> **Target device:** Asus ExpertBook (Intel Core Ultra – Arrow Lake)
 
-This repository documents an evolving set of Linux laptop configurations and experiments, currently tested on an Asus ExpertBook running Fedora 43. The setup focuses on balancing high performance, hardware longevity, and a clean development workflow.
-💻 Hardware Specifications
+A curated, evolving guide for configuring **Linux on the Asus ExpertBook**, tested on **Fedora 43**. This setup prioritizes:
 
-    Device: Asus ExpertBook B5405CCA
+* ⚡ High performance
+* 🔋 Hardware longevity
+* 🧼 A clean, reproducible development workflow
 
-    CPU: Intel Core Ultra 7 (Arrow Lake-P)
+---
 
-    GPU: Intel Graphics (Integrated Arrow Lake-P GPU @ 2.25 GHz)
+## 💻 Hardware Specifications
 
-    NPU: Intel AI Boost (Neural Processing Unit)
+| Component   | Details                                             |
+| ----------- | --------------------------------------------------- |
+| **Device**  | Asus ExpertBook **B5405CCA**                        |
+| **CPU**     | Intel Core Ultra 7 (Arrow Lake‑P)                   |
+| **GPU**     | Intel Integrated Graphics (Arrow Lake‑P @ 2.25 GHz) |
+| **NPU**     | Intel AI Boost (Neural Processing Unit)             |
+| **RAM**     | 32 GB                                               |
+| **Storage** | 1 TB NVMe SSD (Btrfs)                               |
+| **OS**      | Fedora 43 – Workstation                             |
+| **Desktop** | GNOME 49 (Wayland)                                  |
 
-    RAM: 32 GB
+---
 
-    Storage: 1 TB NVMe SSD (btrfs)
+## ⚡ 1. GPU & Multimedia Optimization
 
-    Operating System: Fedora 43 (Workstation Edition)
+Leverage **Arrow Lake media acceleration** to offload video decoding (YouTube, streaming, AV1) from the CPU, reducing heat and power usage.
 
-    Desktop Environment: GNOME 49 (Wayland)
+### 1.1 Enable RPM Fusion Repositories
 
-⚡ 1. GPU & Multimedia Optimization
+Required for non‑free codecs and Intel media drivers.
 
-To leverage the Arrow Lake architecture for hardware-accelerated video decoding (YouTube, streaming, etc.), reducing CPU load and heat.
-1.1 Enable RPM Fusion Repositories
+```bash
+sudo dnf install \
+  https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-$(rpm -E %fedora).noarch.rpm \
+  https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-$(rpm -E %fedora).noarch.rpm
+```
 
-Fedora requires these for non-free codecs and drivers.
-Bash
+### 1.2 Video Acceleration Drivers (VA‑API)
 
-sudo dnf install https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-$(rpm -E %fedora).noarch.rpm https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-$(rpm -E %fedora).noarch.rpm
+Install the modern **Intel Media Driver** supporting **H.264, HEVC, VP9, and AV1**.
 
-1.2 Video Acceleration Drivers (VA-API)
-
-Install the modern Intel Media Driver for hardware decoding/encoding (H.264, HEVC, VP9, and AV1).
-Bash
-
+```bash
 sudo dnf install intel-media-driver libva-utils
+```
 
-Verification: Run vainfo. You should see several VAEntrypointVLD entries, including VAProfileAV1Profile0.
-📦 2. Development Workflow (Distrobox)
+✅ **Verification**
 
-Instead of polluting the host system with multiple language runtimes, we use Distrobox to create isolated environments that share the $HOME directory.
-2.1 Installation
-Bash
+```bash
+vainfo
+```
 
+You should see multiple `VAEntrypointVLD` entries, including:
+
+* `VAProfileAV1Profile0`
+
+---
+
+## 📦 2. Development Workflow (Distrobox)
+
+Avoid polluting the host OS with multiple runtimes by using **Distrobox** containers that seamlessly share your `$HOME` directory.
+
+### 2.1 Installation
+
+```bash
 sudo dnf install distrobox
+```
 
-2.2 Example: Angular Development Box
-Bash
+### 2.2 Example: Angular Development Box
 
+```bash
 # Create a Fedora 43 container
 distrobox create --name dev-angular --image fedora:43
 
-# Enter the box and install tools
+# Enter the box and install tooling
 distrobox enter dev-angular
 sudo dnf install nodejs npm git -y
 sudo npm install -g @angular/cli
+```
 
-2.3 VS Code Integration
+### 2.3 VS Code Integration
 
-    Install VS Code (RPM) on the host.
+1. Install **VS Code (RPM)** on the host
+2. Open your project folder normally
+3. In the integrated terminal, run:
 
-    Open your project folder normally.
+```bash
+distrobox enter dev-angular
+```
 
-    Use the integrated terminal and type distrobox enter dev-angular.
+✨ **Result:** Native UI performance + fully isolated toolchains
 
-    Benefit: Host UI speed + Isolated container binaries.
+---
 
-🔋 3. Power & Battery Management (asusctl)
+## 🔋 3. Power & Battery Management (asusctl)
 
-Essential for Asus-specific hardware features.
-3.1 Installation
-Bash
+Unlock Asus‑specific features such as performance profiles and battery protection.
 
+### 3.1 Installation
+
+```bash
 sudo dnf copr enable lukenukem/asus-linux
 sudo dnf install asusctl
 sudo systemctl enable --now asusd.service
+```
 
-3.2 Battery Charge Limiting
+### 3.2 Battery Charge Limiting
 
-Protect your battery lifespan by limiting the maximum charge (ideal for workstations always plugged in).
-Bash
+Limit maximum charge to extend battery lifespan (recommended for docked laptops).
 
+```bash
 # Limit charge to 60%
 asusctl -c 60
+```
 
-3.3 Performance Profiles
+### 3.3 Performance Profiles
 
-    Get active profile: asusctl profile get
+```bash
+# Show active profile
+asusctl profile get
 
-    Switch/Cycle profiles: asusctl profile -n (Performance, Balanced, Quiet)
+# Cycle profiles (Performance / Balanced / Quiet)
+asusctl profile -n
+```
 
-🔐 4. Biometrics & Authentication
+---
 
-    Fingerprint Sensor: Native support in Fedora 43 via Settings > Users.
+## 🔐 4. Biometrics & Authentication
 
-    FaceID (Howdy): Enable IR camera authentication (Optional).
-    Bash
+* **Fingerprint Sensor**
+  Supported natively via **Settings → Users** in Fedora 43
 
-    sudo dnf copr enable principalis/howdy
-    sudo dnf install howdy
+* **Face Recognition (Howdy – Optional)**
+  Enable IR camera authentication
 
-🧠 5. Local AI with Ollama (Intel GPU)
+```bash
+sudo dnf copr enable principalis/howdy
+sudo dnf install howdy
+```
 
-Run local LLMs inside a Podman container using iGPU acceleration.
-Bash
+---
 
+## 🧠 5. Local AI with Ollama (Intel iGPU)
+
+Run local LLMs using **Intel GPU acceleration** inside a Podman container.
+
+```bash
 podman run -d \
   --name ollama \
   --device /dev/dri/renderD128:/dev/dri/renderD128 \
   -v ollama-data:/root/.ollama \
   -p 11434:11434 \
   docker.io/ollama/ollama:latest
+```
 
-⌨️ 6. Peripherals (Logitech MX Keys)
+---
 
-Manage battery levels and pairing for Logitech devices.
-Bash
+## ⌨️ 6. Peripherals (Logitech MX Keys)
 
+Manage Logitech device pairing and battery levels.
+
+```bash
 sudo dnf install solaar
+```
 
-✍️ Author
+---
 
-Juan Carlos Ramos Moll (CarlesRa)
-Recent Changes (January 2026):
+## ✍️ Author
 
-    ✅ Configured VA-API with AV1 support for Arrow Lake.
+**Juan Carlos Ramos Moll**
+GitHub: **@CarlesRa**
 
-    ✅ Implemented Distrobox workflow for Angular development.
+---
 
-    ✅ Set battery charge threshold to 60% via asusctl.
+## 🗓️ Recent Changes (January 2026)
 
-    ✅ Verified Fedora 43 native hardware compatibility.
+* ✅ VA‑API configured with **AV1** support for Arrow Lake
+* ✅ Distrobox workflow implemented for **Angular development**
+* ✅ Battery charge threshold set to **60%** via `asusctl`
+* ✅ Fedora 43 hardware compatibility fully verified
+
+---
+
+⭐ *If this setup helps you, consider starring the repo or adapting it to your own hardware!*
