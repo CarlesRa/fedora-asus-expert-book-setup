@@ -1,65 +1,111 @@
 # 🐧 Linux Asus ExpertBook Setup
 
-> **Target device:** Asus ExpertBook (Intel Core Ultra – Arrow Lake)
+![Fedora](https://img.shields.io/badge/Fedora-43-blue?logo=fedora&logoColor=white)
+![Wayland](https://img.shields.io/badge/Wayland-1.22-lightgrey)
+![Intel](https://img.shields.io/badge/Intel-Gen12-lightblue)
 
-A curated, evolving guide for configuring **Linux on the Asus ExpertBook**, tested on **Fedora 43**. This setup prioritizes:
+> **Target device:** Asus ExpertBook  
+> **Platform:** Intel Core Ultra (Meteor Lake / Arrow Lake)
 
-* ⚡ High performance
-* 🔋 Hardware longevity
-* 🧼 A clean, reproducible development workflow
+A curated, evolving guide for configuring **Linux on the Asus ExpertBook**, tested on **Fedora 43**.
+
+This setup prioritizes:
+
+- ⚡ **High performance** (GPU / NPU acceleration)
+- 🔋 **Hardware longevity** (battery health)
+- 🧼 **Clean, reproducible development workflow**
+
+---
+
+## 📑 Table of Contents
+
+1. [Hardware Specifications](#hardware-specifications)
+2. [GPU & Multimedia Optimization](#gpu--multimedia-optimization)
+   - [Enable RPM Fusion](#enable-rpm-fusion-repositories)
+   - [Video Acceleration & VA-API / OneVPL](#video-acceleration--modern-runtimes-va-api--onevpl)
+   - [GPU Compute & OpenCL](#gpu-compute--opencl)
+   - [Monitoring & Chrome Tweaks](#monitoring--chrome-tweaks)
+3. [Development Workflow (Distrobox)](#development-workflow-distrobox)
+4. [Infrastructure & Services (Podman Compose)](#infrastructure--services-podman-compose)
+5. [Power & Battery Management (asusctl)](#power--battery-management-asusctl)
+6. [Biometrics & Authentication](#biometrics--authentication)
+7. [Local AI with Ollama (GPU Accelerated)](#local-ai-with-ollama-gpu-accelerated)
+8. [Peripherals](#peripherals)
+9. [Author](#author)
+10. [Recent Changes](#recent-changes-february-2026)
 
 ---
 
 ## 💻 Hardware Specifications
 
-| Component   | Details                                             |
-| ----------- | --------------------------------------------------- |
-| **Device**  | Asus ExpertBook B5405CCA                            |
-| **CPU**     | Intel Core Ultra 7 (Arrow Lake‑P)                   |
-| **GPU**     | Intel Integrated Graphics (Arrow Lake‑P @ 2.25 GHz) |
-| **NPU**     | Intel AI Boost (Neural Processing Unit)             |
-| **RAM**     | 32 GB                                               |
-| **Storage** | 1 TB NVMe SSD (Btrfs)                               |
-| **OS**      | Fedora 43 – Workstation                             |
-| **Desktop** | GNOME 49 (Wayland)                                  |
+| Component | Details |
+|----------|---------|
+| **Device** | Asus ExpertBook B5405CCA |
+| **CPU** | Intel Core Ultra 7 (Meteor Lake / Arrow Lake) |
+| **GPU** | Intel Graphics (Gen12 / Meteor Lake @ 2.25 GHz) |
+| **NPU** | Intel AI Boost (Neural Processing Unit) |
+| **RAM** | 32 GB |
+| **Storage** | 1 TB NVMe SSD (Btrfs) |
+| **OS** | Fedora 43 – Workstation |
+| **Desktop** | GNOME 49 (Wayland) |
 
 ---
 
 ## ⚡ 1. GPU & Multimedia Optimization
 
-Leverage **Arrow Lake media acceleration** to offload video decoding (YouTube, streaming, AV1) from the CPU, reducing heat and power usage.
+Leverage **Intel Media acceleration** to offload video decoding (YouTube, streaming, AV1) from the CPU, reducing heat and power usage.
 
 ### 1.1 Enable RPM Fusion Repositories
-
-Fedora requires RPM Fusion for non‑free codecs and Intel media drivers.
 
 ```bash
 sudo dnf install \
   https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-$(rpm -E %fedora).noarch.rpm \
   https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-$(rpm -E %fedora).noarch.rpm
+sudo dnf upgrade --refresh
 ```
 
-### 1.2 Video Acceleration Drivers (VA‑API)
-
-Install the modern **Intel Media Driver**, supporting **H.264, HEVC, VP9, and AV1**.
+### 1.2 Video Acceleration & Modern Runtimes (VA-API / OneVPL)
 
 ```bash
-sudo dnf install intel-media-driver libva-utils
+sudo dnf install \
+  intel-media-driver \
+  libva-intel-media-driver \
+  intel-vpl-gpu-rt \
+  libva-utils
 ```
 
-✅ **Verification**
+### 1.3 GPU Compute & OpenCL
 
 ```bash
-vainfo
+sudo dnf install \
+  intel-compute-runtime \
+  intel-opencl \
+  intel-ocloc \
+  intel-igc-libs
 ```
 
-You should see `VAProfileAV1Profile0` among the available profiles.
+### 1.4 Monitoring & Chrome Tweaks
+
+#### Tooling
+
+```bash
+sudo dnf install intel-gpu-tools
+sudo intel_gpu_top
+```
+
+#### Chrome Flags
+
+Enable in `chrome://flags`:
+
+- GPU Rasterization  
+- Zero-copy rasterizer  
+- Hardware-accelerated video decode  
 
 ---
 
 ## 📦 2. Development Workflow (Distrobox)
 
-Avoid polluting the host OS with multiple runtimes by using **Distrobox** containers that seamlessly share your `$HOME` directory.
+Avoid polluting the host OS with multiple runtimes by using **Distrobox** containers.
 
 ### 2.1 Installation
 
@@ -67,42 +113,24 @@ Avoid polluting the host OS with multiple runtimes by using **Distrobox** contai
 sudo dnf install distrobox
 ```
 
-### 2.2 Example: Angular Development Box
+### 2.2 VS Code Integration (“The Magic Bridge”)
 
 ```bash
-# Create and enter the container
-distrobox create --name dev-angular --image fedora:43
-distrobox enter dev-angular
-
-# Install tooling inside the box
-sudo dnf install nodejs npm git -y
-sudo npm install -g @angular/cli
-```
-
-### 2.3 VS Code Integration ("The Magic Bridge")
-
-Open **VS Code (installed on the host)** directly from inside the container using `code .`.
-
-```bash
-# Inside the distrobox
+# Inside your distrobox container
 echo 'alias code="distrobox-host-exec code"' >> ~/.bashrc
 source ~/.bashrc
 ```
 
-✨ **Result:** Run `code .` from any containerized project folder while keeping binaries and tooling fully isolated.
+✨ **Result:** Run `code .` from any containerized project folder while keeping binaries isolated.
 
 ---
 
 ## 🚀 3. Infrastructure & Services (Podman Compose)
 
-Use a **hybrid model**: compilers and SDKs inside Distrobox, long‑running services on the host via Podman Compose.
-
-| Layer          | Technology     | Purpose                            |
-| -------------- | -------------- | ---------------------------------- |
-| Coding / Build | Distrobox      | Angular, Node.js, Spring Boot, JDK |
-| Infrastructure | Podman Compose | PostgreSQL, Redis, SonarQube       |
-
-### Start Services (Host)
+| Layer | Technology | Purpose |
+|-----|-----------|---------|
+| Coding / Build | Distrobox | Angular, Node.js, Spring Boot, JDK |
+| Infrastructure | Podman Compose | PostgreSQL, Redis, SonarQube |
 
 ```bash
 sudo dnf install podman-compose
@@ -113,22 +141,15 @@ podman-compose up -d
 
 ## 🔋 4. Power & Battery Management (asusctl)
 
-Unlock Asus‑specific firmware features and battery protection.
-
-### 4.1 Installation
-
 ```bash
 sudo dnf copr enable lukenukem/asus-linux
 sudo dnf install asusctl
 sudo systemctl enable --now asusd.service
 ```
 
-### 4.2 Battery Charge Limiting
-
-Limit maximum charge to preserve battery health (recommended for docked laptops).
+Limit battery charge (recommended for docked laptops):
 
 ```bash
-# Limit charge to 60%
 asusctl -c 60
 ```
 
@@ -136,11 +157,10 @@ asusctl -c 60
 
 ## 🔐 5. Biometrics & Authentication
 
-* **Fingerprint Sensor**
-  Native support via **Settings → Users**
+### Fingerprint Sensor
+Native support via **Settings → Users**
 
-* **Face Recognition (Howdy – Optional)**
-  Enable IR camera authentication
+### Face Recognition (Howdy – IR Camera)
 
 ```bash
 sudo dnf copr enable principalis/howdy
@@ -149,14 +169,12 @@ sudo dnf install howdy
 
 ---
 
-## 🧠 6. Local AI with Ollama (Intel iGPU)
-
-Run local LLMs using **Intel GPU acceleration** via Podman.
+## 🧠 6. Local AI with Ollama (GPU Accelerated)
 
 ```bash
 podman run -d \
   --name ollama \
-  --device /dev/dri/renderD128:/dev/dri/renderD128 \
+  --device /dev/dri:/dev/dri \
   -v ollama-data:/root/.ollama \
   -p 11434:11434 \
   docker.io/ollama/ollama:latest
@@ -164,9 +182,9 @@ podman run -d \
 
 ---
 
-## ⌨️ 7. Peripherals (Logitech MX Keys)
+## ⌨️ 7. Peripherals
 
-Manage Logitech device pairing and battery levels.
+### Logitech MX Keys
 
 ```bash
 sudo dnf install solaar
@@ -176,18 +194,14 @@ sudo dnf install solaar
 
 ## ✍️ Author
 
-**Juan Carlos Ramos Moll**
-GitHub: **@CarlesRa**
+**Juan Carlos Ramos Moll**  
+GitHub: **[@CarlesRa](https://github.com/CarlesRa)**
 
 ---
 
-## 🗓️ Recent Changes (January 2026)
+## 🗓️ Recent Changes (February 2026)
 
-* ✅ VA‑API configured with **AV1** support for Arrow Lake
-* ✅ Integrated VS Code `host-exec` alias for seamless containerized development
-* ✅ Hybrid workflow established: **Distrobox (Apps)** + **Podman Compose (Infrastructure)**
-* ✅ Battery charge threshold set to **60%** for long‑term health
-
----
-
-⭐ *If this setup helps you, consider starring the repository!*
+- ✅ GPU Compute: Added OpenCL and Intel Compute Runtime support  
+- ✅ VPL Integration: Configured `intel-vpl-gpu-rt` for Gen12+ architectures  
+- ✅ Monitoring: Added `intel-gpu-tools` for real-time telemetry  
+- ✅ VA-API: Verified 4K/60 fps hardware decoding on Fedora 43  
