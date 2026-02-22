@@ -138,18 +138,36 @@ Expected output:
 
 ---
 
-## 🤖 3. Local AI with Ollama (GPU Accelerated)
+## 🤖 3. Local AI with Ollama (CPU)
 
-> Note: Ollama currently uses the GPU (via OpenCL/Vulkan) or CPU.  
-> To use the NPU, rely on the OpenVINO stack.
+> **GPU acceleration status (Fedora 43 + Intel iGPU):** Vulkan support in Ollama is experimental and currently generates corrupt output with Intel integrated graphics. CPU inference is the stable option for now.
+>
+> For GPU/NPU acceleration, use llama.cpp with the OpenVINO backend instead (see future section).
+
+### 3.1 Install
 
 ```bash
-podman run -d \
-  --name ollama \
-  --device /dev/dri:/dev/dri \
-  -v ollama-data:/root/.ollama \
-  -p 11434:11434 \
-  docker.io/ollama/ollama:latest
+curl -fsSL https://ollama.com/install.sh | sh
+sudo systemctl enable --now ollama
+```
+
+### 3.2 Recommended Models
+
+Smaller models run significantly faster on CPU. Avoid large models (7B+) for interactive use.
+
+```bash
+ollama pull qwen2.5:0.5b   # Fast, coherent, good for testing (~5 tokens/s)
+ollama pull llama3.2        # 3B, usable but slower (~3.6 tokens/s)
+```
+
+### 3.3 Basic Usage
+
+```bash
+ollama run qwen2.5:0.5b "hola"           # Single prompt
+ollama run qwen2.5:0.5b                  # Interactive chat
+ollama run qwen2.5:0.5b "hola" --verbose # Show tokens/s and timing
+ollama list                               # List downloaded models
+ollama ps                                 # Show running models and device
 ```
 
 ---
