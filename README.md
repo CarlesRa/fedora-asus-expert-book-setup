@@ -20,7 +20,7 @@ This setup prioritizes:
 1. [Hardware Specifications](#hardware-specifications)
 2. [GPU & Multimedia Optimization](#1-gpu--multimedia-optimization)
 3. [NPU & AI Acceleration (OpenVINO)](#2-npu--ai-acceleration-openvino)
-4. [Local AI with Ollama (GPU)](#3-local-ai-with-ollama-gpu-accelerated)
+4. [Local AI Inference](#3-local-ai-inference)
 5. [Development Workflow (Distrobox)](#4-development-workflow-distrobox)
 6. [Power & Battery Management](#5-power--battery-management-asusctl)
 
@@ -138,36 +138,96 @@ Expected output:
 
 ---
 
-## 🤖 3. Local AI with Ollama (CPU)
+## 🤖 3. Local AI Inference
 
-> **GPU acceleration status (Fedora 43 + Intel iGPU):** Vulkan support in Ollama is experimental and currently generates corrupt output with Intel integrated graphics. CPU inference is the stable option for now.
->
-> For GPU/NPU acceleration, use llama.cpp with the OpenVINO backend instead (see future section).
+Three options tested on this hardware, each with different tradeoffs:
 
-### 3.1 Install
+| Option | Device | Speed | Notes |
+|--------|--------|-------|-------|
+| Ollama | CPU | ~3–5 tok/s | Easy setup, stable |
+| llama.cpp | CPU | ~64 tok/s | Fast, GGUF models |
+| OpenVINO GenAI | CPU / GPU | ✅ Working | Intel native stack |
+| OpenVINO GenAI | NPU | ⏳ Blocked | See note below |
+
+> **NPU inference blocked:** Fedora 43 ships OpenVINO 2025.1 but `openvino-genai` pip only distributes 2025.4+, which requires `libopenvino.so.2541`. Intel has no RPM repo for 2025.4. Will unblock when Fedora updates OpenVINO.
+
+---
+
+### 3.1 Ollama (Easy, CPU)
+
+Vulkan support for Intel iGPU is experimental and generates corrupt output — CPU is the only stable option.
 
 ```bash
 curl -fsSL https://ollama.com/install.sh | sh
 sudo systemctl enable --now ollama
 ```
 
-### 3.2 Recommended Models
-
-Smaller models run significantly faster on CPU. Avoid large models (7B+) for interactive use.
-
 ```bash
-ollama pull qwen2.5:0.5b   # Fast, coherent, good for testing (~5 tokens/s)
-ollama pull llama3.2        # 3B, usable but slower (~3.6 tokens/s)
-```
+ollama pull qwen2.5:0.5b   # ~5 tokens/s, good for quick tests
+ollama pull llama3.2        # ~3.6 tokens/s, more capable
 
-### 3.3 Basic Usage
-
-```bash
 ollama run qwen2.5:0.5b "hola"           # Single prompt
 ollama run qwen2.5:0.5b                  # Interactive chat
-ollama run qwen2.5:0.5b "hola" --verbose # Show tokens/s and timing
-ollama list                               # List downloaded models
-ollama ps                                 # Show running models and device
+ollama run qwen2.5:0.5b "hola" --verbose # Show tokens/s
+ollama ps                                 # Show device being used
+```
+
+---
+
+### 3.2 llama.cpp (Fast, CPU)
+
+Significantly faster than Ollama on CPU (~64 tok/s vs ~5 tok/s). Uses GGUF models.
+
+```bash
+# Build from source
+sudo dnf install cmake gcc g++ ninja-build
+git clone https://github.com/ggerganov/llama.cpp ~/Projects/llama.cpp
+cd ~/Projects/llama.cpp
+cmake -B build
+cmake --build build --config Release -j$(nproc)
+```
+
+```bash
+# Download a GGUF model
+wget https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf -P ~/Models/
+
+# Run interactive mode
+~/Projects/llama.cpp/build/bin/llama-cli \
+  -m ~/Models/qwen2.5-0.5b-instruct-q4_k_m.gguf \
+  -n 200
+```
+
+---
+
+### 3.3 OpenVINO GenAI (CPU + GPU)
+
+Uses Intel's native inference stack. Requires converting models from HuggingFace to OpenVINO format first.
+
+```bash
+# Install dependencies
+sudo dnf install python3-devel openvino-devel
+pip install openvino-genai optimum[openvino] --break-system-packages
+
+# Convert a model (downloads from HuggingFace and converts locally)
+optimum-cli export openvino \
+  --model Qwen/Qwen2.5-0.5B-Instruct \
+  --weight-format int8 \
+  ~/Models/qwen2.5-0.5b-openvino
+```
+
+```python
+import openvino_genai as ov_genai
+
+# CPU (stable)
+pipe = ov_genai.LLMPipeline('~/Models/qwen2.5-0.5b-openvino', 'CPU')
+
+# GPU — Intel iGPU (stable)
+pipe = ov_genai.LLMPipeline('~/Models/qwen2.5-0.5b-openvino', 'GPU')
+
+# NPU — blocked until Fedora updates OpenVINO to 2025.4+
+# pipe = ov_genai.LLMPipeline('~/Models/qwen2.5-0.5b-openvino', 'NPU')
+
+print(pipe.generate('hola, cómo estás?', max_new_tokens=50))
 ```
 
 ---
@@ -235,6 +295,7 @@ asusctl -c 60   # Set battery charge limit to 60%
 ✅ **NPU Support:** Full step-by-step procedure to enable NPU on Fedora 43 using `alien` to convert Intel's Ubuntu `.deb` packages.  
 ✅ **Library path fix:** Documented symlink workaround for Ubuntu vs Fedora path mismatch (`/usr/lib/x86_64-linux-gnu` → `/usr/lib64`).  
 ✅ **OpenVINO 2025.1:** Verified working with `['CPU', 'GPU', 'NPU']` output.  
-✅ **Groups:** Documented `video,render` group requirements for NPU access.
+✅ **Local AI:** Documented three inference options (Ollama, llama.cpp, OpenVINO GenAI) with real measured performance.  
+⏳ **NPU inference:** Blocked by OpenVINO version mismatch — tracked for future update.
 
 ---
