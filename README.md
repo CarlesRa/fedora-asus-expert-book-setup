@@ -79,7 +79,7 @@ crw-rw-rw-. 1 root render 261, 0 ... /dev/accel/accel0
 intel_vpu   360448  0
 ```
 
-> The full AI stack (OpenVINO, Ollama, llama.cpp) runs inside a Distrobox Ubuntu container — nothing else needs to be installed on the host.
+> The full AI stack (OpenVINO, Ollama, llama.cpp, Open WebUI) runs inside a Distrobox Ubuntu container — nothing else needs to be installed on the host.
 
 ---
 
@@ -92,7 +92,7 @@ intel_vpu   360448  0
 | Tool | Device | Speed |
 |------|--------|-------|
 | Ollama | CPU | ~3–5 tok/s |
-| llama.cpp | CPU | ~64 tok/s |
+| llama.cpp (llama-server) | CPU | ~64 tok/s |
 | OpenVINO GenAI | CPU / GPU | ✅ Working |
 | OpenVINO GenAI | NPU | ~6 tok/s |
 
@@ -132,23 +132,6 @@ ollama pull llama3.2
 distrobox-export --bin /usr/local/bin/ollama
 ```
 
-On the host, add an alias to start the server without entering the container:
-
-```bash
-echo 'alias ollama-serve="distrobox enter dev-ai -- bash -c \"ollama serve > /tmp/ollama.log 2>&1 &\""' >> ~/.bashrc
-source ~/.bashrc
-```
-
-Daily usage from the host:
-
-```bash
-ollama-serve                              # Start Ollama server
-ollama run qwen2.5:0.5b "hola"           # Run a model
-ollama run qwen2.5:0.5b "hola" --verbose # Show tokens/s
-ollama list                               # List downloaded models
-ollama ps                                 # Show running models
-```
-
 ### 3.3 llama.cpp (inside dev-ai)
 
 Significantly faster than Ollama on CPU (~64 tok/s). Uses GGUF models.
@@ -161,8 +144,9 @@ cd llama.cpp
 cmake -B build
 cmake --build build --config Release -j$(nproc)
 
-# Export binary to host (run once)
+# Export binaries to host (run once)
 distrobox-export --bin /home/$USER/Projects/llama.cpp/build/bin/llama-cli
+distrobox-export --bin /home/$USER/Projects/llama.cpp/build/bin/llama-server
 ```
 
 Download a GGUF model (shared `~/Models` between host and container):
@@ -171,14 +155,16 @@ Download a GGUF model (shared `~/Models` between host and container):
 wget https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf -P ~/Models/
 ```
 
-Daily usage from the host:
+### 3.4 Open WebUI (inside dev-ai)
+
+A full-featured ChatGPT-like interface with built-in RAG support (upload PDFs, documents, web pages as context).
 
 ```bash
-llama-cli -m ~/Models/qwen2.5-0.5b-instruct-q4_k_m.gguf -n 200           # Interactive chat
-llama-cli -m ~/Models/qwen2.5-0.5b-instruct-q4_k_m.gguf -p "hola" -n 50  # Single prompt
+# Inside the container
+pip install open-webui --break-system-packages
 ```
 
-### 3.4 OpenVINO GenAI + NPU (inside dev-ai)
+### 3.5 OpenVINO GenAI + NPU (inside dev-ai)
 
 ```bash
 # Inside the container
@@ -198,6 +184,43 @@ pipe = ov_genai.LLMPipeline('/home/<user>/Models/qwen2.5-0.5b-openvino', 'NPU')
 print(pipe.generate('hola, cómo estás?', max_new_tokens=50))
 # Note: first run is slow due to JIT compilation. Subsequent runs are faster.
 ```
+
+### 3.6 Host Aliases (Daily Usage)
+
+Add these to `~/.bashrc` for seamless usage from the host without entering the container:
+
+```bash
+# Ollama server
+echo 'alias ollama-serve="distrobox enter dev-ai -- bash -c \"ollama serve > /tmp/ollama.log 2>&1 &\""' >> ~/.bashrc
+
+# llama-server (fast inference backend)
+echo 'alias llama-serve="llama-server -m ~/Models/qwen2.5-0.5b-instruct-q4_k_m.gguf --port 8081 > /tmp/llama.log 2>&1 &"' >> ~/.bashrc
+
+# Open WebUI
+echo 'alias webui="distrobox enter dev-ai -- bash -c \"open-webui serve > /tmp/webui.log 2>&1 &\""' >> ~/.bashrc
+
+source ~/.bashrc
+```
+
+Make sure `~/.local/bin` is in your PATH (required for exported binaries):
+
+```bash
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
+source ~/.bashrc
+```
+
+Daily workflow:
+
+```bash
+llama-serve    # Start llama-server (~64 tok/s backend)
+webui          # Start Open WebUI at http://localhost:8080
+```
+
+In Open WebUI, go to **Admin Panel → Settings → Connections** and add an OpenAI-compatible connection:
+- **URL:** `http://localhost:8081/v1`
+- **API Key:** `llama` (any text)
+
+Select the GGUF model in the chat for maximum speed.
 
 ---
 
@@ -293,10 +316,11 @@ This makes the NPU visible to OpenVINO, but `openvino-genai` still can't use it 
 
 ## 🗓️ Recent Changes (February 2026)
 
-✅ **Distrobox AI stack:** Full Intel AI stack (Ollama, llama.cpp, OpenVINO GenAI + NPU) running inside Ubuntu 24.04 container with zero performance overhead.  
+✅ **Distrobox AI stack:** Full Intel AI stack (Ollama, llama.cpp, OpenVINO GenAI + NPU, Open WebUI) running inside Ubuntu 24.04 container with zero performance overhead.  
+✅ **Open WebUI:** ChatGPT-like interface with RAG support, connected to llama-server for ~64 tok/s.  
 ✅ **NPU confirmed working:** OpenVINO GenAI on NPU via Distrobox at ~6 tok/s.  
-✅ **llama.cpp:** ~64 tok/s on CPU, binary exported to host via `distrobox-export`.  
-✅ **Ollama:** Exported to host, server started via alias without entering the container.  
+✅ **llama.cpp:** ~64 tok/s on CPU, binaries exported to host via `distrobox-export`.  
+✅ **Host aliases:** `ollama-serve`, `llama-serve`, `webui` for seamless daily usage from host.  
 ✅ **Host experience documented:** Appendix covers what works and what doesn't when installing directly on Fedora.
 
 ---

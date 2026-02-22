@@ -1,16 +1,18 @@
 # 🤖 Local AI Usage Guide
 
-Practical guide for running local LLMs with **Ollama** and **llama.cpp** on the Asus ExpertBook setup.
+Practical guide for running local LLMs with **Ollama**, **llama.cpp**, and **Open WebUI** on the Asus ExpertBook setup.
 
-> Both tools run inside the `dev-ai` Distrobox container and are exported to the host. See the main README for setup instructions.
+> All tools run inside the `dev-ai` Distrobox container and are exported to the host. See the main README for setup instructions.
 
 ---
 
 ## 📑 Table of Contents
 1. [Finding Models](#-1-finding-models)
-2. [Ollama](#-2-ollama)
-3. [llama.cpp](#-3-llamacpp)
-4. [Recommended Models by Use Case](#-4-recommended-models-by-use-case)
+2. [Daily Workflow](#-2-daily-workflow)
+3. [Ollama](#-3-ollama)
+4. [llama.cpp](#-4-llamacpp)
+5. [Open WebUI](#-5-open-webui)
+6. [Recommended Models by Use Case](#-6-recommended-models-by-use-case)
 
 ---
 
@@ -64,22 +66,29 @@ Lower quantization = smaller file, lower quality. Higher = better quality, more 
 
 ---
 
-## 🦙 2. Ollama
+## ⚡ 2. Daily Workflow
 
-### Starting the Server
-
-Ollama runs as a background server. Start it from the host:
+Start everything from the host with aliases:
 
 ```bash
-ollama-serve   # alias defined in ~/.bashrc
+llama-serve    # Start llama-server (~64 tok/s) on port 8081
+webui          # Start Open WebUI at http://localhost:8080
 ```
 
-Verify it's running:
+Or if you prefer Ollama over llama-server:
 
 ```bash
-ollama ps      # shows loaded models
-curl http://localhost:11434   # should return "Ollama is running"
+ollama-serve   # Start Ollama on port 11434
+webui          # Start Open WebUI at http://localhost:8080
 ```
+
+Open WebUI is available at `http://localhost:8080`. Select the model in the top dropdown:
+- **GGUF model** (e.g. `qwen2.5-0.5b-instruct-q4_k_m.gguf`) → uses llama-server, ~64 tok/s
+- **Ollama model** (e.g. `qwen2.5:0.5b`) → uses Ollama, ~3-5 tok/s
+
+---
+
+## 🦙 3. Ollama
 
 ### Managing Models
 
@@ -87,7 +96,6 @@ curl http://localhost:11434   # should return "Ollama is running"
 # Download a model
 ollama pull qwen2.5:0.5b
 ollama pull llama3.2
-ollama pull llama3.2:1b
 ollama pull codellama:7b
 
 # List downloaded models
@@ -100,7 +108,7 @@ ollama rm llama3.2
 ollama show llama3.2
 ```
 
-### Running Models
+### Running Models from CLI
 
 ```bash
 # Interactive chat
@@ -119,39 +127,24 @@ ollama run llama3.2 "summarize this code:" < myfile.py
 ### Useful Parameters
 
 ```bash
-# Set context window size
-ollama run llama3.2 --ctx-size 8192
-
-# Keep model loaded in memory (avoids reload delay)
-ollama run llama3.2 --keep-alive 30m
-
-# Change system prompt
-ollama run llama3.2 --system "You are a senior Python developer. Be concise."
+ollama run llama3.2 --ctx-size 8192                              # Set context window
+ollama run llama3.2 --keep-alive 30m                             # Keep model in memory
+ollama run llama3.2 --system "You are a senior Python developer" # Custom system prompt
 ```
 
 ### REST API
 
-Ollama exposes an OpenAI-compatible API at `http://localhost:11434`. Use it to integrate with editors, scripts, or apps:
+Ollama exposes an OpenAI-compatible API at `http://localhost:11434`:
 
 ```bash
-# Simple generation
 curl http://localhost:11434/api/generate -d '{
   "model": "qwen2.5:0.5b",
   "prompt": "What is the capital of France?",
   "stream": false
 }'
-
-# Chat format (OpenAI-compatible)
-curl http://localhost:11434/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "qwen2.5:0.5b",
-    "messages": [{"role": "user", "content": "hola"}]
-  }'
 ```
 
 ```python
-# Python — using openai SDK pointed at local Ollama
 from openai import OpenAI
 
 client = OpenAI(base_url="http://localhost:11434/v1", api_key="ollama")
@@ -164,13 +157,11 @@ print(response.choices[0].message.content)
 
 ### Modelfile — Custom Models
 
-You can customize any model with a `Modelfile`:
-
 ```dockerfile
 FROM llama3.2
 
 SYSTEM """
-You are a senior software engineer. 
+You are a senior software engineer.
 Answer questions concisely and always show code examples.
 """
 
@@ -185,24 +176,21 @@ ollama run my-dev-assistant
 
 ---
 
-## ⚡ 3. llama.cpp
+## ⚡ 4. llama.cpp
 
-llama.cpp is significantly faster than Ollama on CPU (~64 tok/s vs ~3-5 tok/s) and gives more control over inference parameters.
+llama.cpp is significantly faster than Ollama on CPU (~64 tok/s vs ~3-5 tok/s).
 
 ### Downloading GGUF Models
 
 ```bash
-# From Hugging Face — always check the model page for the exact filename
-wget https://huggingface.co/<author>/<repo>/resolve/main/<filename>.gguf -P ~/Models/
-
-# Example: Qwen2.5 0.5B
+# From Hugging Face
 wget https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf -P ~/Models/
 
-# Example: Qwen2.5 7B (larger, better quality)
+# Larger model (better quality)
 wget https://huggingface.co/bartowski/Qwen2.5-7B-Instruct-GGUF/resolve/main/Qwen2.5-7B-Instruct-Q4_K_M.gguf -P ~/Models/
 ```
 
-Tip: use `huggingface-cli` inside the container for easier browsing and downloading:
+Using `huggingface-cli` (inside the container):
 
 ```bash
 pip install huggingface_hub --break-system-packages
@@ -211,67 +199,80 @@ huggingface-cli download bartowski/Qwen2.5-7B-Instruct-GGUF \
   --local-dir ~/Models/
 ```
 
-### Basic Usage
+### CLI Usage
 
 ```bash
-# Interactive chat (default mode)
+# Interactive chat
 llama-cli -m ~/Models/qwen2.5-0.5b-instruct-q4_k_m.gguf
 
-# Single prompt, no interactive mode
+# Single prompt
 llama-cli -m ~/Models/qwen2.5-0.5b-instruct-q4_k_m.gguf \
-  -p "explain what an API is" \
-  -n 200 \
-  --no-display-prompt
+  -p "explain what an API is" -n 200 --no-display-prompt
 
-# Pipe input
-echo "what is Docker?" | llama-cli -m ~/Models/qwen2.5-0.5b-instruct-q4_k_m.gguf -n 200
-```
-
-### Useful Parameters
-
-```bash
+# Useful parameters
 -n 200          # max tokens to generate
 -c 4096         # context window size
---temp 0.7      # temperature (0 = deterministic, 1 = creative)
---top-p 0.9     # nucleus sampling
--t 8            # number of CPU threads (default: all)
---repeat-penalty 1.1  # reduce repetition
+--temp 0.7      # temperature
+-t 8            # CPU threads
 ```
 
 ### llama-server — OpenAI-Compatible API
 
-Run llama.cpp as a server compatible with the OpenAI API:
+Run as a server for use with Open WebUI or any OpenAI-compatible client:
 
 ```bash
-# Inside the container or via distrobox
-llama-server \
-  -m ~/Models/qwen2.5-0.5b-instruct-q4_k_m.gguf \
-  --port 8080 \
-  --ctx-size 4096 \
-  -t 8
+# Already configured via alias:
+llama-serve    # starts on port 8081
+
+# Or manually with custom options:
+llama-server -m ~/Models/qwen2.5-0.5b-instruct-q4_k_m.gguf --port 8081 --ctx-size 4096
 ```
 
-Test it:
+Test the API:
 
 ```bash
-curl http://localhost:8080/v1/chat/completions \
+curl http://localhost:8081/v1/chat/completions \
   -H "Content-Type: application/json" \
-  -d '{
-    "model": "qwen2.5",
-    "messages": [{"role": "user", "content": "hola"}]
-  }'
-```
-
-Export the server binary to the host as well:
-
-```bash
-# Inside the container
-distrobox-export --bin /home/$USER/Projects/llama.cpp/build/bin/llama-server
+  -d '{"model": "qwen2.5", "messages": [{"role": "user", "content": "hola"}]}'
 ```
 
 ---
 
-## 🎯 4. Recommended Models by Use Case
+## 🖥️ 5. Open WebUI
+
+A full-featured ChatGPT-like interface with RAG support — upload PDFs, documents, and web pages as context for your conversations.
+
+### Starting
+
+```bash
+webui    # starts at http://localhost:8080
+```
+
+### Connecting to llama-server (Recommended — ~64 tok/s)
+
+1. Go to **Admin Panel → Settings → Connections**
+2. Under **API OpenAI**, click **+** and add:
+   - **URL:** `http://localhost:8081/v1`
+   - **API Key:** `llama` (any text)
+3. Save and select the GGUF model in the chat dropdown
+
+### Using RAG
+
+1. Click the **+** icon in the chat input
+2. Upload a PDF, text file, or paste a URL
+3. The document is indexed and used as context for your conversation
+
+You can also create persistent **Knowledge Bases** via **Workspace → Knowledge** — useful for ongoing projects or documentation.
+
+### Tips
+
+- Use **llama-server** as backend for speed, **Ollama** for model variety
+- The **Arena Model** option lets you compare two models side by side
+- **Notes** feature works as a local scratchpad integrated with the AI
+
+---
+
+## 🎯 6. Recommended Models by Use Case
 
 ### General Chat
 
@@ -286,7 +287,7 @@ distrobox-export --bin /home/$USER/Projects/llama.cpp/build/bin/llama-server
 | Model | Size | Tool | Notes |
 |-------|------|------|-------|
 | `codellama:7b` | 7B | Ollama | Solid code completion |
-| `qwen2.5-coder:7b` | 7B | Ollama | Excellent for code, multilingual |
+| `qwen2.5-coder:7b` | 7B | Ollama | Excellent for code |
 | `deepseek-coder-v2:16b` | 16B | Ollama | Best quality, needs more RAM |
 
 ### Small / Fast (NPU-friendly)
@@ -296,12 +297,10 @@ distrobox-export --bin /home/$USER/Projects/llama.cpp/build/bin/llama-server
 | `qwen2.5:0.5b` | 0.5B | OpenVINO GenAI | Works on NPU |
 | `smollm2:135m` | 135M | Ollama | Tiny, extremely fast |
 
-### Finding the Right Size for Your RAM
+### Choosing the Right Size (32GB RAM)
 
-With 32GB RAM on this machine:
-
-- **0.5B–3B** — runs comfortably, leaves plenty of RAM free
-- **7B Q4_K_M** — ideal balance, ~5GB VRAM/RAM
+- **0.5B–3B** — comfortable, leaves RAM free
+- **7B Q4_K_M** — ideal balance, ~5GB RAM
 - **13B Q4_K_M** — feasible, ~9GB RAM
 - **32B Q4_K_M** — possible but slow on CPU (~18GB RAM)
 - **70B+** — not practical without discrete GPU
@@ -310,17 +309,13 @@ With 32GB RAM on this machine:
 
 ## 💡 Tips
 
-**Check model performance before committing to a large download:**
 ```bash
-ollama run qwen2.5:0.5b "write a Python function that reverses a string" --verbose
-```
+# Check disk usage
+ls -lh ~/Models/
+du -sh ~/Models/*
 
-**Use llama.cpp for speed, Ollama for convenience:**
-- llama.cpp: scripting, pipelines, maximum speed
-- Ollama: interactive chat, API integrations, model management
-
-**Keep models organized:**
-```bash
-ls -lh ~/Models/   # check disk usage
-du -sh ~/Models/*  # size per model
+# Check what's running
+ollama ps
+curl http://localhost:8081/v1/models   # llama-server models
+curl http://localhost:8080             # Open WebUI status
 ```
