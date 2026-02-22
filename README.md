@@ -146,10 +146,10 @@ Three options tested on this hardware, each with different tradeoffs:
 |--------|--------|-------|-------|
 | Ollama | CPU | ~3–5 tok/s | Easy setup, stable |
 | llama.cpp | CPU | ~64 tok/s | Fast, GGUF models |
-| OpenVINO GenAI | CPU / GPU | ✅ Working | Intel native stack |
-| OpenVINO GenAI | NPU | ⏳ Blocked | See note below |
+| OpenVINO GenAI | CPU / GPU | ✅ Working | Intel native stack (host) |
+| OpenVINO GenAI | NPU | ✅ ~6 tok/s | Via Distrobox Ubuntu |
 
-> **NPU inference blocked:** Fedora 43 ships OpenVINO 2025.1 but `openvino-genai` pip only distributes 2025.4+, which requires `libopenvino.so.2541`. Intel has no RPM repo for 2025.4. Will unblock when Fedora updates OpenVINO.
+> **NPU via Distrobox:** Running OpenVINO GenAI on NPU requires the full Intel `.deb` stack (Ubuntu packages). On Fedora host this is blocked by a version mismatch (OpenVINO 2025.1 vs openvino-genai 2025.4+). The solution is a Distrobox Ubuntu 24.04 container where the complete Intel stack installs natively. First inference is slow due to JIT compilation; subsequent runs are faster.
 
 ---
 
@@ -199,9 +199,11 @@ wget https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5
 
 ---
 
-### 3.3 OpenVINO GenAI (CPU + GPU)
+### 3.3 OpenVINO GenAI (CPU + GPU + NPU via Distrobox)
 
-Uses Intel's native inference stack. Requires converting models from HuggingFace to OpenVINO format first.
+Uses Intel's native inference stack. CPU and GPU work on Fedora host. NPU requires a Distrobox Ubuntu container due to version constraints.
+
+#### Host (CPU + GPU)
 
 ```bash
 # Install dependencies
@@ -218,16 +220,45 @@ optimum-cli export openvino \
 ```python
 import openvino_genai as ov_genai
 
-# CPU (stable)
-pipe = ov_genai.LLMPipeline('~/Models/qwen2.5-0.5b-openvino', 'CPU')
-
-# GPU — Intel iGPU (stable)
-pipe = ov_genai.LLMPipeline('~/Models/qwen2.5-0.5b-openvino', 'GPU')
-
-# NPU — blocked until Fedora updates OpenVINO to 2025.4+
-# pipe = ov_genai.LLMPipeline('~/Models/qwen2.5-0.5b-openvino', 'NPU')
-
+pipe = ov_genai.LLMPipeline('~/Models/qwen2.5-0.5b-openvino', 'CPU')  # or 'GPU'
 print(pipe.generate('hola, cómo estás?', max_new_tokens=50))
+```
+
+#### NPU via Distrobox Ubuntu 24.04
+
+Fedora ships OpenVINO 2025.1 but `openvino-genai` pip requires 2025.4+. The full Intel `.deb` stack installs cleanly inside an Ubuntu container.
+
+```bash
+# Create and enter the container
+distrobox create --name dev-ai --image ubuntu:24.04
+distrobox enter dev-ai
+
+# Install Intel NPU driver stack
+wget https://github.com/intel/linux-npu-driver/releases/download/v1.28.0/linux-npu-driver-v1.28.0.20251218-20347000698-ubuntu2404.tar.gz
+tar -xf linux-npu-driver-v1.28.0.20251218-20347000698-ubuntu2404.tar.gz
+sudo apt install -y libtbb12
+sudo dpkg -i intel-fw-npu_*.deb intel-level-zero-npu_*.deb intel-driver-compiler-npu_*.deb
+
+# Install Level Zero
+wget https://github.com/oneapi-src/level-zero/releases/download/v1.24.2/level-zero_1.24.2+u24.04_amd64.deb
+sudo dpkg -i level-zero_*.deb
+
+# Install openvino-genai
+pip install openvino-genai optimum[openvino] --break-system-packages
+
+# Convert model (shares ~/Models with host — no re-download needed)
+optimum-cli export openvino \
+  --model Qwen/Qwen2.5-0.5B-Instruct \
+  --weight-format int8 \
+  ~/Models/qwen2.5-0.5b-openvino
+```
+
+```python
+import openvino_genai as ov_genai
+
+pipe = ov_genai.LLMPipeline('/home/<user>/Models/qwen2.5-0.5b-openvino', 'NPU')
+print(pipe.generate('hola, cómo estás?', max_new_tokens=50))
+# First run is slow (JIT compilation). Subsequent runs are faster.
 ```
 
 ---
@@ -296,6 +327,6 @@ asusctl -c 60   # Set battery charge limit to 60%
 ✅ **Library path fix:** Documented symlink workaround for Ubuntu vs Fedora path mismatch (`/usr/lib/x86_64-linux-gnu` → `/usr/lib64`).  
 ✅ **OpenVINO 2025.1:** Verified working with `['CPU', 'GPU', 'NPU']` output.  
 ✅ **Local AI:** Documented three inference options (Ollama, llama.cpp, OpenVINO GenAI) with real measured performance.  
-⏳ **NPU inference:** Blocked by OpenVINO version mismatch — tracked for future update.
+✅ **NPU inference via Distrobox:** Full Intel `.deb` stack running inside Ubuntu 24.04 container — NPU confirmed working at ~6 tok/s.
 
 ---
