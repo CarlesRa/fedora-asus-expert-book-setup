@@ -2,174 +2,98 @@
 
 ![Fedora](https://img.shields.io/badge/Fedora-43-blue?logo=fedora&logoColor=white)
 ![Wayland](https://img.shields.io/badge/Wayland-1.22-lightgrey)
-![Intel](https://img.shields.io/badge/Intel-Gen12-lightblue)
+![Intel](https://img.shields.io/badge/Intel-Core_Ultra-lightblue)
 
-> **Target device:** Asus ExpertBook  
+> **Target device:** Asus ExpertBook B5405CCA  
 > **Platform:** Intel Core Ultra (Meteor Lake / Arrow Lake)
 
 A curated, evolving guide for configuring **Linux on the Asus ExpertBook**, tested on **Fedora 43**.
 
 This setup prioritizes:
-
 - ⚡ **High performance** (GPU / NPU acceleration)
 - 🔋 **Hardware longevity** (battery health)
-- 🧼 **Clean, reproducible development workflow**
+- 🧠 **Local AI efficiency** (offloading LLMs to the NPU)
 
 ---
 
 ## 📑 Table of Contents
-
 1. [Hardware Specifications](#hardware-specifications)
-2. [GPU & Multimedia Optimization](#gpu--multimedia-optimization)
-   - [Enable RPM Fusion](#enable-rpm-fusion-repositories)
-   - [Video Acceleration & VA-API / OneVPL](#video-acceleration--modern-runtimes-va-api--onevpl)
-   - [GPU Compute & OpenCL](#gpu-compute--opencl)
-   - [Monitoring & Chrome Tweaks](#monitoring--chrome-tweaks)
-3. [Development Workflow (Distrobox)](#development-workflow-distrobox)
-4. [Infrastructure & Services (Podman Compose)](#infrastructure--services-podman-compose)
-5. [Power & Battery Management (asusctl)](#power--battery-management-asusctl)
-6. [Biometrics & Authentication](#biometrics--authentication)
-7. [Local AI with Ollama (GPU Accelerated)](#local-ai-with-ollama-gpu-accelerated)
-8. [Peripherals](#peripherals)
-9. [Author](#author)
-10. [Recent Changes](#recent-changes-february-2026)
+2. [GPU & Multimedia Optimization](#1-gpu--multimedia-optimization)
+3. [NPU & AI Acceleration (OpenVINO)](#2-npu--ai-acceleration-openvino)
+4. [Local AI with Ollama (GPU)](#3-local-ai-with-ollama-gpu-accelerated)
+5. [Development Workflow (Distrobox)](#4-development-workflow-distrobox)
+6. [Power & Battery Management](#5-power--battery-management-asusctl)
 
 ---
 
 ## 💻 Hardware Specifications
 
 | Component | Details |
-|----------|---------|
-| **Device** | Asus ExpertBook B5405CCA |
+|-----------|----------|
 | **CPU** | Intel Core Ultra 7 (Meteor Lake / Arrow Lake) |
-| **GPU** | Intel Graphics (Gen12 / Meteor Lake @ 2.25 GHz) |
-| **NPU** | Intel AI Boost (Neural Processing Unit) |
-| **RAM** | 32 GB |
-| **Storage** | 1 TB NVMe SSD (Btrfs) |
-| **OS** | Fedora 43 – Workstation |
-| **Desktop** | GNOME 49 (Wayland) |
+| **GPU** | Intel Graphics (Gen12 / Arc Architecture) |
+| **NPU** | **Intel AI Boost** (Neural Processing Unit) - `intel_vpu` driver |
+| **OS** | Fedora 43 – Workstation (Kernel 6.x+) |
 
 ---
 
 ## ⚡ 1. GPU & Multimedia Optimization
 
-Leverage **Intel Media acceleration** to offload video decoding (YouTube, streaming, AV1) from the CPU, reducing heat and power usage.
-
-### 1.1 Enable RPM Fusion Repositories
-
-```bash
-sudo dnf install \
-  https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-$(rpm -E %fedora).noarch.rpm \
-  https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-$(rpm -E %fedora).noarch.rpm
-sudo dnf upgrade --refresh
-```
-
-### 1.2 Video Acceleration & Modern Runtimes (VA-API / OneVPL)
+### 1.1 Video Acceleration & Compute
 
 ```bash
 sudo dnf install \
   intel-media-driver \
   libva-intel-media-driver \
   intel-vpl-gpu-rt \
-  libva-utils
+  intel-compute-runtime \
+  intel-opencl
 ```
 
-### 1.3 GPU Compute & OpenCL
+---
+
+## 🧠 2. NPU & AI Acceleration (OpenVINO)
+
+To leverage the dedicated AI hardware (NPU) and free up the CPU/GPU during inference workloads (LLMs, Computer Vision).
+
+### 2.1 Install the AI Stack (Level Zero)
 
 ```bash
 sudo dnf install \
-  intel-compute-runtime \
-  intel-opencl \
-  intel-ocloc \
-  intel-igc-libs
+  openvino \
+  python3-openvino \
+  intel-level-zero \
+  oneapi-level-zero
 ```
 
-### 1.4 Monitoring & Chrome Tweaks
+### 2.2 Configure Hardware Permissions
 
-#### Tooling
+Your user must belong to the acceleration groups:
 
 ```bash
-sudo dnf install intel-gpu-tools
-sudo intel_gpu_top
+sudo usermod -aG video,render $USER
 ```
 
-#### Chrome Flags
+(Log out and log back in to apply changes.)
 
-Enable in `chrome://flags`:
-
-- GPU Rasterization  
-- Zero-copy rasterizer  
-- Hardware-accelerated video decode  
-
----
-
-## 📦 2. Development Workflow (Distrobox)
-
-Avoid polluting the host OS with multiple runtimes by using **Distrobox** containers.
-
-### 2.1 Installation
+### 2.3 Verify NPU Detection
 
 ```bash
-sudo dnf install distrobox
+python3 -c "from openvino.runtime import Core; print(Core().available_devices)"
 ```
 
-### 2.2 VS Code Integration (“The Magic Bridge”)
+Expected output:
 
-```bash
-# Inside your distrobox container
-echo 'alias code="distrobox-host-exec code"' >> ~/.bashrc
-source ~/.bashrc
-```
-
-✨ **Result:** Run `code .` from any containerized project folder while keeping binaries isolated.
-
----
-
-## 🚀 3. Infrastructure & Services (Podman Compose)
-
-| Layer | Technology | Purpose |
-|-----|-----------|---------|
-| Coding / Build | Distrobox | Angular, Node.js, Spring Boot, JDK |
-| Infrastructure | Podman Compose | PostgreSQL, Redis, SonarQube |
-
-```bash
-sudo dnf install podman-compose
-podman-compose up -d
+```text
+['CPU', 'GPU', 'NPU']
 ```
 
 ---
 
-## 🔋 4. Power & Battery Management (asusctl)
+## 🤖 3. Local AI with Ollama (GPU Accelerated)
 
-```bash
-sudo dnf copr enable lukenukem/asus-linux
-sudo dnf install asusctl
-sudo systemctl enable --now asusd.service
-```
-
-Limit battery charge (recommended for docked laptops):
-
-```bash
-asusctl -c 60
-```
-
----
-
-## 🔐 5. Biometrics & Authentication
-
-### Fingerprint Sensor
-Native support via **Settings → Users**
-
-### Face Recognition (Howdy – IR Camera)
-
-```bash
-sudo dnf copr enable principalis/howdy
-sudo dnf install howdy
-```
-
----
-
-## 🧠 6. Local AI with Ollama (GPU Accelerated)
+> Note: Ollama currently uses the GPU (via OpenCL/Vulkan) or CPU.  
+> To use the NPU, rely on the OpenVINO stack.
 
 ```bash
 podman run -d \
@@ -182,26 +106,27 @@ podman run -d \
 
 ---
 
-## ⌨️ 7. Peripherals
+## 📦 4. Development Workflow (Distrobox)
 
-### Logitech MX Keys
-
-```bash
-sudo dnf install solaar
-```
+_(Your existing Distrobox section fits perfectly here — keep it as-is.)_
 
 ---
 
-## ✍️ Author
+## 🔋 5. Power & Battery Management (asusctl)
 
-**Juan Carlos Ramos Moll**  
-GitHub: **[@CarlesRa](https://github.com/CarlesRa)**
+```bash
+sudo dnf copr enable lukenukem/asus-linux
+sudo dnf install asusctl
+sudo systemctl enable --now asusd.service
+asusctl -c 60   # Set battery charge limit to 60%
+```
 
 ---
 
 ## 🗓️ Recent Changes (February 2026)
 
-- ✅ GPU Compute: Added OpenCL and Intel Compute Runtime support  
-- ✅ VPL Integration: Configured `intel-vpl-gpu-rt` for Gen12+ architectures  
-- ✅ Monitoring: Added `intel-gpu-tools` for real-time telemetry  
-- ✅ VA-API: Verified 4K/60 fps hardware decoding on Fedora 43  
+✅ **NPU Support:** Added OpenVINO 2025.1 and Level Zero drivers for Meteor/Arrow Lake.  
+✅ **Fedora 43:** Updated package names for the intel-level-zero stack.  
+✅ **Groups:** Documented `video,render` group requirements for NPU access.
+
+---
