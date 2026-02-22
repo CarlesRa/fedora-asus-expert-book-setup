@@ -68,23 +68,21 @@ Lower quantization = smaller file, lower quality. Higher = better quality, more 
 
 ## ⚡ 2. Daily Workflow
 
-Start everything from the host with aliases:
+Launch everything with the `ai-start.sh` script:
 
 ```bash
-llama-serve    # Start llama-server (~64 tok/s) on port 8081
-webui          # Start Open WebUI at http://localhost:8080
+~/Projects/fedora-asus-expert-book-setup/scripts/ai-start.sh
 ```
 
-Or if you prefer Ollama over llama-server:
-
-```bash
-ollama-serve   # Start Ollama on port 11434
-webui          # Start Open WebUI at http://localhost:8080
-```
+The script will:
+1. Show all `.gguf` models available in `~/Models/` and ask you to pick one
+2. Start `llama-server` with the selected model on port 8081
+3. Launch Open WebUI at `http://localhost:8080`
+4. Stop everything cleanly on `Ctrl+C`
 
 Open WebUI is available at `http://localhost:8080`. Select the model in the top dropdown:
 - **GGUF model** (e.g. `qwen2.5-0.5b-instruct-q4_k_m.gguf`) → uses llama-server, ~64 tok/s
-- **Ollama model** (e.g. `qwen2.5:0.5b`) → uses Ollama, ~3-5 tok/s
+- **Ollama model** (e.g. `qwen2.5:0.5b`) → uses Ollama, ~3-5 tok/s (start with `ollama-serve` alias first)
 
 ---
 

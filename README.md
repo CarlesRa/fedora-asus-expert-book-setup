@@ -185,22 +185,31 @@ print(pipe.generate('hola, cómo estás?', max_new_tokens=50))
 # Note: first run is slow due to JIT compilation. Subsequent runs are faster.
 ```
 
-### 3.6 Host Aliases (Daily Usage)
+### 3.6 Daily Usage — ai-start Script
 
-Add these to `~/.bashrc` for seamless usage from the host without entering the container:
+A single script launches the full stack — presents a model selector, starts llama-server, and opens Open WebUI. Located at `scripts/ai-start.sh` in this repo.
 
 ```bash
-# Ollama server
-echo 'alias ollama-serve="distrobox enter dev-ai -- bash -c \"ollama serve > /tmp/ollama.log 2>&1 &\""' >> ~/.bashrc
-
-# llama-server (fast inference backend)
-echo 'alias llama-serve="llama-server -m ~/Models/qwen2.5-0.5b-instruct-q4_k_m.gguf --port 8081 > /tmp/llama.log 2>&1 &"' >> ~/.bashrc
-
-# Open WebUI
-echo 'alias webui="distrobox enter dev-ai -- bash -c \"open-webui serve > /tmp/webui.log 2>&1 &\""' >> ~/.bashrc
-
-source ~/.bashrc
+chmod +x ~/Projects/fedora-asus-expert-book-setup/scripts/ai-start.sh
+~/Projects/fedora-asus-expert-book-setup/scripts/ai-start.sh
 ```
+
+Output:
+
+```
+📦 Available models:
+1) qwen2.5-0.5b-instruct-q4_k_m.gguf
+2) Cancel
+
+Select a model: 1
+
+🚀 Starting llama-server with qwen2.5-0.5b-instruct-q4_k_m.gguf on port 8081...
+   PID: 12769 — logs at /tmp/llama.log
+🖥️  Starting Open WebUI at http://localhost:8080
+   Press Ctrl+C to stop everything
+```
+
+Any `.gguf` file placed in `~/Models/` will appear in the selector automatically.
 
 Make sure `~/.local/bin` is in your PATH (required for exported binaries):
 
@@ -209,18 +218,11 @@ echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
 source ~/.bashrc
 ```
 
-Daily workflow:
-
-```bash
-llama-serve    # Start llama-server (~64 tok/s backend)
-webui          # Start Open WebUI at http://localhost:8080
-```
-
-In Open WebUI, go to **Admin Panel → Settings → Connections** and add an OpenAI-compatible connection:
+In Open WebUI, go to **Admin Panel → Settings → Connections** and add an OpenAI-compatible connection (first time only):
 - **URL:** `http://localhost:8081/v1`
 - **API Key:** `llama` (any text)
 
-Select the GGUF model in the chat for maximum speed.
+Select the GGUF model in the chat dropdown for maximum speed (~64 tok/s).
 
 ---
 
@@ -320,7 +322,7 @@ This makes the NPU visible to OpenVINO, but `openvino-genai` still can't use it 
 ✅ **Open WebUI:** ChatGPT-like interface with RAG support, connected to llama-server for ~64 tok/s.  
 ✅ **NPU confirmed working:** OpenVINO GenAI on NPU via Distrobox at ~6 tok/s.  
 ✅ **llama.cpp:** ~64 tok/s on CPU, binaries exported to host via `distrobox-export`.  
-✅ **Host aliases:** `ollama-serve`, `llama-serve`, `webui` for seamless daily usage from host.  
+✅ **ai-start.sh:** Single script to select model, launch llama-server and Open WebUI from host.  
 ✅ **Host experience documented:** Appendix covers what works and what doesn't when installing directly on Fedora.
 
 ---
