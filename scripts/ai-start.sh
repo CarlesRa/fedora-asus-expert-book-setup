@@ -21,7 +21,7 @@ fi
 MODEL_PATH="${models[$((choice-1))]}"
 echo ""
 echo "🚀 Starting llama-server with $(basename $MODEL_PATH) on port $PORT..."
-llama-server -m "$MODEL_PATH" --port "$PORT" > /tmp/llama.log 2>&1 &
+distrobox enter dev-ai -- llama-server -m "$MODEL_PATH" --port "$PORT" > /tmp/llama.log 2>&1 &llama-server -m "$MODEL_PATH" --port "$PORT" > /tmp/llama.log 2>&1 &
 LLAMA_PID=$!
 echo "   PID: $LLAMA_PID — logs at /tmp/llama.log"
 

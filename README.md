@@ -32,7 +32,7 @@ This setup prioritizes:
 | Component | Details |
 |-----------|----------|
 | **CPU** | Intel Core Ultra 7 255H (Meteor Lake) |
-| **GPU** | Intel Graphics (Gen12 / Arc Architecture) |
+| **GPU** | Intel Graphics (Gen12 / Arc Architecture) — ~21 GiB shared VRAM |
 | **NPU** | Intel AI Boost — `intel_vpu` kernel driver |
 | **OS** | Fedora 43 Workstation (Kernel 6.18+) |
 
@@ -89,21 +89,24 @@ intel_vpu   360448  0
 
 ### Performance Summary (measured on Core Ultra 7 255H)
 
-| Tool | Device | Speed |
-|------|--------|-------|
-| Ollama | CPU | ~3–5 tok/s |
-| llama.cpp (llama-server) | CPU | ~64 tok/s |
-| OpenVINO GenAI | CPU / GPU | ✅ Working |
-| OpenVINO GenAI | NPU | ~6 tok/s |
+| Tool | Device | Model | Speed |
+|------|--------|-------|-------|
+| Ollama | CPU | any | ~3–5 tok/s |
+| llama.cpp (llama-server) | CPU | Qwen2.5 0.5B | ~64 tok/s |
+| llama.cpp + Vulkan | GPU (Intel Arc iGPU) | Gemma 9B Q4_K_M (20/43 layers) | faster than CPU |
+| OpenVINO GenAI | CPU / GPU | — | ✅ Working |
+| OpenVINO GenAI | NPU | — | ~6 tok/s |
 
-## 3.0 Model Sourcing: Where to get models
+### 3.0 Model Sourcing: Where to get models
 
-| Source                | Format          | Best for...                                                                 | Recommended Repos/Users                         |
-|----------------------|----------------|----------------------------------------------------------------------------|------------------------------------------------|
-| [Hugging Face](https://huggingface.co) | `.gguf`        | llama.cpp / Ollama. Single-file, easy to use, optimized for CPU/NPU        | [bartowski](https://huggingface.co/bartowski), [MaziyarPanahi](https://huggingface.co/MaziyarPanahi), [mradermacher](https://huggingface.co/mradermacher) |
-| [Hugging Face](https://huggingface.co) | `.safetensors` | OpenVINO / Transformers. Official "raw" weights. Requires conversion       | [google (Gemma)](https://huggingface.co/google), [meta-llama](https://huggingface.co/meta-llama), [mistralai](https://huggingface.co/mistralai) |
-| [Ollama Library](https://ollama.com/library) | Managed        | One-command setup. Automatic download and config                           | [ollama.com/library](https://ollama.com/library) |
-| [Civitai](https://civitai.com) | `.safetensors` | Stable Diffusion / Flux. Image generation models only                     | -                                              |
+| Source | Format | Best for... | Recommended Repos/Users |
+|--------|--------|-------------|------------------------|
+| [Hugging Face](https://huggingface.co) | `.gguf` | llama.cpp / Ollama. Single-file, easy to use, optimized for CPU/GPU | [bartowski](https://huggingface.co/bartowski), [MaziyarPanahi](https://huggingface.co/MaziyarPanahi), [mradermacher](https://huggingface.co/mradermacher) |
+| [Hugging Face](https://huggingface.co) | `.safetensors` | OpenVINO / Transformers. Official "raw" weights. Requires conversion | [google (Gemma)](https://huggingface.co/google), [meta-llama](https://huggingface.co/meta-llama), [mistralai](https://huggingface.co/mistralai) |
+| [Ollama Library](https://ollama.com/library) | Managed | One-command setup. Automatic download and config | [ollama.com/library](https://ollama.com/library) |
+| [Civitai](https://civitai.com) | `.safetensors` | Stable Diffusion / Flux. Image generation models only | — |
+
+---
 
 ### 3.1 Setup: Distrobox Ubuntu Container
 
@@ -129,6 +132,8 @@ wget https://github.com/oneapi-src/level-zero/releases/download/v1.24.2/level-ze
 sudo dpkg -i level-zero_*.deb
 ```
 
+---
+
 ### 3.2 Ollama (inside dev-ai)
 
 ```bash
@@ -141,28 +146,81 @@ ollama pull llama3.2
 distrobox-export --bin /usr/local/bin/ollama
 ```
 
-### 3.3 llama.cpp (inside dev-ai)
+---
 
-Significantly faster than Ollama on CPU (~64 tok/s). Uses GGUF models.
+### 3.3 llama.cpp with Vulkan GPU Acceleration (inside dev-ai)
+
+Significantly faster than Ollama. With Vulkan, offloads model layers to the Intel iGPU for large models like Gemma 9B.
+
+#### 3.3.1 Install Vulkan dependencies
 
 ```bash
-# Inside the container — build from source
+# Add LunarG Vulkan SDK repo (provides glslc shader compiler)
+wget -qO- https://packages.lunarg.com/lunarg-signing-key-pub.asc | sudo tee /etc/apt/trusted.gpg.d/lunarg.asc
+sudo wget -qO /etc/apt/sources.list.d/lunarg-vulkan-noble.list \
+  https://packages.lunarg.com/vulkan/lunarg-vulkan-noble.list
+sudo apt update
+sudo apt install -y vulkan-sdk glslang-tools spirv-tools
+```
+
+Verify:
+```bash
+glslc --version  # Should show shaderc version
+```
+
+#### 3.3.2 Build llama.cpp with Vulkan
+
+```bash
+# Inside the container
 cd ~/Projects
 git clone https://github.com/ggerganov/llama.cpp
 cd llama.cpp
-cmake -B build
-cmake --build build --config Release -j$(nproc)
 
-# Export binaries to host (run once)
+# Build with Vulkan support (cleans any previous build first)
+rm -rf build
+cmake -B build -DGGML_VULKAN=ON
+cmake --build build --config Release -j$(nproc)
+```
+
+> ⚠️ The build uses all CPU cores (~98% across all 16 threads) and takes several minutes — this is normal.
+
+#### 3.3.3 Export binaries to host (run once)
+
+```bash
 distrobox-export --bin /home/$USER/Projects/llama.cpp/build/bin/llama-cli
 distrobox-export --bin /home/$USER/Projects/llama.cpp/build/bin/llama-server
 ```
 
-Download a GGUF model (shared `~/Models` between host and container):
+#### 3.3.4 Download a GGUF model
 
 ```bash
+# Shared ~/Models between host and container
 wget https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf -P ~/Models/
 ```
+
+#### 3.3.5 Run llama-server with GPU offloading
+
+```bash
+# Try offloading all layers to GPU (recommended — ~21 GiB free on iGPU)
+./build/bin/llama-server \
+  -m ~/Models/gemma-2-9b-it-Q4_K_M.gguf \
+  -ngl 43 \
+  --port 8081
+```
+
+Confirm Vulkan is active — look for these lines in the output:
+
+```
+llama_model_load_from_file_impl: using device Vulkan0 (Intel(R) Graphics (ARL))
+load_tensors: offloading 19 repeating layers to GPU
+load_tensors: offloaded 20/43 layers to GPU
+load_tensors:   CPU_Mapped model buffer size =  3323.03 MiB
+load_tensors:      Vulkan0 model buffer size =  2883.14 MiB
+```
+
+> `-ngl` controls how many layers go to the GPU. Start with `43` (all layers) for maximum speed. If you hit VRAM limits, reduce it (e.g. `-ngl 20`).
+
+---
 
 ### 3.4 Open WebUI (inside dev-ai)
 
@@ -172,6 +230,8 @@ A full-featured ChatGPT-like interface with built-in RAG support (upload PDFs, d
 # Inside the container
 pip install open-webui --break-system-packages
 ```
+
+---
 
 ### 3.5 OpenVINO GenAI + NPU (inside dev-ai)
 
@@ -193,6 +253,8 @@ pipe = ov_genai.LLMPipeline('/home/<user>/Models/qwen2.5-0.5b-openvino', 'NPU')
 print(pipe.generate('hola, cómo estás?', max_new_tokens=50))
 # Note: first run is slow due to JIT compilation. Subsequent runs are faster.
 ```
+
+---
 
 ### 3.6 Daily Usage — ai-start Script
 
@@ -231,7 +293,7 @@ In Open WebUI, go to **Admin Panel → Settings → Connections** and add an Ope
 - **URL:** `http://localhost:8081/v1`
 - **API Key:** `llama` (any text)
 
-Select the GGUF model in the chat dropdown for maximum speed (~64 tok/s).
+Select the GGUF model in the chat dropdown for maximum speed.
 
 ---
 
@@ -325,13 +387,17 @@ This makes the NPU visible to OpenVINO, but `openvino-genai` still can't use it 
 
 ---
 
-## 🗓️ Recent Changes (February 2026)
+## 🗓️ Recent Changes
 
+### April 2026
+✅ **llama.cpp + Vulkan GPU acceleration:** Rebuilt llama.cpp with `-DGGML_VULKAN=ON` inside the dev-ai container. The Intel iGPU (Intel Graphics ARL) is now used for inference via Vulkan, offloading model layers to the ~21 GiB shared GPU memory.  
+✅ **Vulkan SDK installed in container:** Used LunarG repo (`lunarg-vulkan-noble`) to install `glslc` and the full Vulkan SDK — required for compiling the Vulkan shaders in llama.cpp.  
+✅ **Gemma 9B running on GPU:** `gemma-2-9b-it-Q4_K_M.gguf` confirmed working with `-ngl 20` (20/43 layers on GPU). Can push to `-ngl 43` for full GPU offload given available VRAM.
+
+### February 2026
 ✅ **Distrobox AI stack:** Full Intel AI stack (Ollama, llama.cpp, OpenVINO GenAI + NPU, Open WebUI) running inside Ubuntu 24.04 container with zero performance overhead.  
 ✅ **Open WebUI:** ChatGPT-like interface with RAG support, connected to llama-server for ~64 tok/s.  
 ✅ **NPU confirmed working:** OpenVINO GenAI on NPU via Distrobox at ~6 tok/s.  
 ✅ **llama.cpp:** ~64 tok/s on CPU, binaries exported to host via `distrobox-export`.  
 ✅ **ai-start.sh:** Single script to select model, launch llama-server and Open WebUI from host.  
 ✅ **Host experience documented:** Appendix covers what works and what doesn't when installing directly on Fedora.
-
----
