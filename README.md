@@ -96,6 +96,15 @@ intel_vpu   360448  0
 | OpenVINO GenAI | CPU / GPU | ✅ Working |
 | OpenVINO GenAI | NPU | ~6 tok/s |
 
+## 3.0 Model Sourcing: Where to get models
+
+| Source                | Format          | Best for...                                                                 | Recommended Repos/Users                         |
+|----------------------|----------------|----------------------------------------------------------------------------|------------------------------------------------|
+| [Hugging Face](https://huggingface.co) | `.gguf`        | llama.cpp / Ollama. Single-file, easy to use, optimized for CPU/NPU        | [bartowski](https://huggingface.co/bartowski), [MaziyarPanahi](https://huggingface.co/MaziyarPanahi), [mradermacher](https://huggingface.co/mradermacher) |
+| [Hugging Face](https://huggingface.co) | `.safetensors` | OpenVINO / Transformers. Official "raw" weights. Requires conversion       | [google (Gemma)](https://huggingface.co/google), [meta-llama](https://huggingface.co/meta-llama), [mistralai](https://huggingface.co/mistralai) |
+| [Ollama Library](https://ollama.com/library) | Managed        | One-command setup. Automatic download and config                           | [ollama.com/library](https://ollama.com/library) |
+| [Civitai](https://civitai.com) | `.safetensors` | Stable Diffusion / Flux. Image generation models only                     | -                                              |
+
 ### 3.1 Setup: Distrobox Ubuntu Container
 
 ```bash
