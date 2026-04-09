@@ -87,21 +87,38 @@ intel_vpu   360448  0
 
 > **Recommended approach: Distrobox Ubuntu container.** Running the full Intel AI stack inside an Ubuntu 24.04 container gives access to the complete `.deb` ecosystem — including NPU support — with **zero performance overhead** and a clean Fedora host.
 
-### Performance Summary (measured on Core Ultra 7 255H)
+### Performance Benchmarks (measured on Core Ultra 7 255H)
 
-| Tool | Device | Model | Speed |
-|------|--------|-------|-------|
-| Ollama | CPU | any | ~3–5 tok/s |
-| llama.cpp (llama-server) | CPU | Qwen2.5 0.5B | ~64 tok/s |
-| llama.cpp + Vulkan | GPU (Intel Arc iGPU) | Gemma 9B Q4_K_M (20/43 layers) | faster than CPU |
-| OpenVINO GenAI | CPU / GPU | — | ✅ Working |
-| OpenVINO GenAI | NPU | — | ~6 tok/s |
+> All llama.cpp benchmarks use CPU-only build (no Vulkan). See findings below.
+
+| Build | Model | Size | Prompt | Generation |
+|-------|-------|------|--------|------------|
+| llama.cpp CPU | Qwen 2.5 0.5B Q4_K_M | 0.5B | 185.9 t/s | 56.0 t/s |
+| llama.cpp CPU | Gemma 4 E2B Q4_K_M | 2B | 46.3 t/s | 15.4 t/s |
+| llama.cpp CPU | Gemma 4 E4B Q4_K_M | 4B | — | ~8 t/s |
+| llama.cpp + Vulkan | Qwen 2.5 0.5B Q4_K_M | 0.5B | 86.1 t/s | 16.7 t/s |
+| llama.cpp + Vulkan | Gemma 4 E2B Q4_K_M | 2B | 75.1 t/s | 6.9 t/s |
+| llama.cpp + Vulkan | Gemma 4 E4B Q4_K_M | 4B | 48.2 t/s | 5.3 t/s |
+| llama.cpp + Vulkan | Gemma 2 9B Q4_K_M | 9B | 29.2 t/s | 3.7 t/s |
+| OpenVINO GenAI | NPU | — | — | ~6 t/s |
+
+> ⚠️ **Key finding:** Vulkan (iGPU) is **slower than CPU-only** for all model sizes on this hardware. The Intel iGPU uses shared RAM with limited memory bandwidth — the CPU accesses it faster directly. **Use CPU-only build for best performance.**
+
+### Recommended models for this hardware
+
+| Use case | Model | Generation |
+|----------|-------|------------|
+| Fast & lightweight | Qwen 2.5 0.5B Q4_K_M | ~56 t/s |
+| Best quality/speed balance ⭐ | Gemma 4 E2B Q4_K_M | ~15 t/s |
+| Maximum quality | Gemma 4 E4B Q4_K_M | ~8 t/s |
+
+---
 
 ### 3.0 Model Sourcing: Where to get models
 
 | Source | Format | Best for... | Recommended Repos/Users |
 |--------|--------|-------------|------------------------|
-| [Hugging Face](https://huggingface.co) | `.gguf` | llama.cpp / Ollama. Single-file, easy to use, optimized for CPU/GPU | [bartowski](https://huggingface.co/bartowski), [MaziyarPanahi](https://huggingface.co/MaziyarPanahi), [mradermacher](https://huggingface.co/mradermacher) |
+| [Hugging Face](https://huggingface.co) | `.gguf` | llama.cpp / Ollama. Single-file, easy to use, optimized for CPU | [bartowski](https://huggingface.co/bartowski), [MaziyarPanahi](https://huggingface.co/MaziyarPanahi), [mradermacher](https://huggingface.co/mradermacher) |
 | [Hugging Face](https://huggingface.co) | `.safetensors` | OpenVINO / Transformers. Official "raw" weights. Requires conversion | [google (Gemma)](https://huggingface.co/google), [meta-llama](https://huggingface.co/meta-llama), [mistralai](https://huggingface.co/mistralai) |
 | [Ollama Library](https://ollama.com/library) | Managed | One-command setup. Automatic download and config | [ollama.com/library](https://ollama.com/library) |
 | [Civitai](https://civitai.com) | `.safetensors` | Stable Diffusion / Flux. Image generation models only | — |
@@ -148,27 +165,9 @@ distrobox-export --bin /usr/local/bin/ollama
 
 ---
 
-### 3.3 llama.cpp with Vulkan GPU Acceleration (inside dev-ai)
+### 3.3 llama.cpp — CPU-only build (inside dev-ai)
 
-Significantly faster than Ollama. With Vulkan, offloads model layers to the Intel iGPU for large models like Gemma 9B.
-
-#### 3.3.1 Install Vulkan dependencies
-
-```bash
-# Add LunarG Vulkan SDK repo (provides glslc shader compiler)
-wget -qO- https://packages.lunarg.com/lunarg-signing-key-pub.asc | sudo tee /etc/apt/trusted.gpg.d/lunarg.asc
-sudo wget -qO /etc/apt/sources.list.d/lunarg-vulkan-noble.list \
-  https://packages.lunarg.com/vulkan/lunarg-vulkan-noble.list
-sudo apt update
-sudo apt install -y vulkan-sdk glslang-tools spirv-tools
-```
-
-Verify:
-```bash
-glslc --version  # Should show shaderc version
-```
-
-#### 3.3.2 Build llama.cpp with Vulkan
+> **CPU-only is faster than Vulkan on this hardware.** The Intel iGPU shares RAM bandwidth with the CPU — the CPU accesses it more efficiently for LLM inference.
 
 ```bash
 # Inside the container
@@ -176,49 +175,72 @@ cd ~/Projects
 git clone https://github.com/ggerganov/llama.cpp
 cd llama.cpp
 
-# Build with Vulkan support (cleans any previous build first)
+# Build CPU-only (fastest for this hardware)
 rm -rf build
-cmake -B build -DGGML_VULKAN=ON
+cmake -B build
 cmake --build build --config Release -j$(nproc)
 ```
 
 > ⚠️ The build uses all CPU cores (~98% across all 16 threads) and takes several minutes — this is normal.
 
-#### 3.3.3 Export binaries to host (run once)
+#### Export binaries to host (run once)
 
 ```bash
 distrobox-export --bin /home/$USER/Projects/llama.cpp/build/bin/llama-cli
 distrobox-export --bin /home/$USER/Projects/llama.cpp/build/bin/llama-server
 ```
 
-#### 3.3.4 Download a GGUF model
+#### Download models
 
 ```bash
-# Shared ~/Models between host and container
+# Fast model (~56 t/s)
 wget https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf -P ~/Models/
+
+# Best quality/speed balance (~15 t/s) ⭐ recommended
+wget https://huggingface.co/bartowski/google_gemma-4-E2B-it-GGUF/resolve/main/google_gemma-4-E2B-it-Q4_K_M.gguf -P ~/Models/
+
+# Maximum quality (~8 t/s)
+wget https://huggingface.co/bartowski/google_gemma-4-E4B-it-GGUF/resolve/main/google_gemma-4-E4B-it-Q4_K_M.gguf -P ~/Models/
 ```
 
-#### 3.3.5 Run llama-server with GPU offloading
+#### Run llama-server
 
 ```bash
-# Try offloading all layers to GPU (recommended — ~21 GiB free on iGPU)
+# No -ngl flag — CPU only, fastest for this hardware
 ./build/bin/llama-server \
-  -m ~/Models/gemma-2-9b-it-Q4_K_M.gguf \
-  -ngl 43 \
+  -m ~/Models/google_gemma-4-E2B-it-Q4_K_M.gguf \
   --port 8081
 ```
 
-Confirm Vulkan is active — look for these lines in the output:
+#### Measure tokens per second
 
-```
-llama_model_load_from_file_impl: using device Vulkan0 (Intel(R) Graphics (ARL))
-load_tensors: offloading 19 repeating layers to GPU
-load_tensors: offloaded 20/43 layers to GPU
-load_tensors:   CPU_Mapped model buffer size =  3323.03 MiB
-load_tensors:      Vulkan0 model buffer size =  2883.14 MiB
+```bash
+./build/bin/llama-cli \
+  -m ~/Models/google_gemma-4-E2B-it-Q4_K_M.gguf \
+  -p "Explain what artificial intelligence is in 3 paragraphs" \
+  -n 200
+# Look for: [ Prompt: XX.X t/s | Generation: XX.X t/s ]
 ```
 
-> `-ngl` controls how many layers go to the GPU. Start with `43` (all layers) for maximum speed. If you hit VRAM limits, reduce it (e.g. `-ngl 20`).
+#### About Vulkan (iGPU acceleration)
+
+Vulkan was tested extensively. Despite offloading all 43/43 layers to the Intel iGPU (`Intel Graphics ARL`, ~21 GiB shared VRAM), performance was **consistently worse than CPU-only** across all model sizes. The bottleneck is memory bandwidth — the iGPU shares RAM with the CPU and accesses it through a slower internal bus. CPU-only build wins on this hardware.
+
+To build with Vulkan if needed for future testing:
+
+```bash
+# Install Vulkan SDK first (provides glslc)
+wget -qO- https://packages.lunarg.com/lunarg-signing-key-pub.asc | sudo tee /etc/apt/trusted.gpg.d/lunarg.asc
+sudo wget -qO /etc/apt/sources.list.d/lunarg-vulkan-noble.list \
+  https://packages.lunarg.com/vulkan/lunarg-vulkan-noble.list
+sudo apt update
+sudo apt install -y vulkan-sdk glslang-tools spirv-tools
+
+# Build with Vulkan
+rm -rf build
+cmake -B build -DGGML_VULKAN=ON
+cmake --build build --config Release -j$(nproc)
+```
 
 ---
 
@@ -235,11 +257,17 @@ pip install open-webui --break-system-packages
 
 ### 3.5 OpenVINO GenAI + NPU (inside dev-ai)
 
-```bash
-# Inside the container
-pip install openvino-genai optimum[openvino] --break-system-packages
+> ⚠️ **Dependency conflict warning:** `optimum-intel` requires `transformers<4.58` but Open WebUI installs `transformers 5.x`. Use a separate venv to avoid breaking the main environment:
 
+```bash
+python3 -m venv ~/venv-openvino
+source ~/venv-openvino/bin/activate
+pip install "transformers==4.45.0" openvino-genai "optimum[openvino]" optimum-intel
+```
+
+```bash
 # Convert model to OpenVINO format
+source ~/venv-openvino/bin/activate
 optimum-cli export openvino \
   --model Qwen/Qwen2.5-0.5B-Instruct \
   --weight-format int8 \
@@ -269,12 +297,13 @@ Output:
 
 ```
 📦 Available models:
-1) qwen2.5-0.5b-instruct-q4_k_m.gguf
-2) Cancel
+1) google_gemma-4-E2B-it-Q4_K_M.gguf
+2) qwen2.5-0.5b-instruct-q4_k_m.gguf
+3) Cancel
 
 Select a model: 1
 
-🚀 Starting llama-server with qwen2.5-0.5b-instruct-q4_k_m.gguf on port 8081...
+🚀 Starting llama-server with google_gemma-4-E2B-it-Q4_K_M.gguf on port 8081...
    PID: 12769 — logs at /tmp/llama.log
 🖥️  Starting Open WebUI at http://localhost:8080
    Press Ctrl+C to stop everything
@@ -292,8 +321,6 @@ source ~/.bashrc
 In Open WebUI, go to **Admin Panel → Settings → Connections** and add an OpenAI-compatible connection (first time only):
 - **URL:** `http://localhost:8081/v1`
 - **API Key:** `llama` (any text)
-
-Select the GGUF model in the chat dropdown for maximum speed.
 
 ---
 
@@ -357,7 +384,7 @@ During initial setup we attempted to install the full Intel AI stack directly on
 **What works on host:**
 - OpenVINO 2025.1 via `dnf` — CPU and GPU inference work fine
 - NPU detection (`['CPU', 'GPU', 'NPU']`) — works after manual driver installation (see below)
-- llama.cpp built from source — ~64 tok/s on CPU
+- llama.cpp built from source — ~56 tok/s on CPU with Qwen 0.5B
 
 **What doesn't work on host:**
 - Ollama GPU acceleration — Vulkan support for Intel iGPU generates corrupt output
@@ -390,14 +417,16 @@ This makes the NPU visible to OpenVINO, but `openvino-genai` still can't use it 
 ## 🗓️ Recent Changes
 
 ### April 2026
-✅ **llama.cpp + Vulkan GPU acceleration:** Rebuilt llama.cpp with `-DGGML_VULKAN=ON` inside the dev-ai container. The Intel iGPU (Intel Graphics ARL) is now used for inference via Vulkan, offloading model layers to the ~21 GiB shared GPU memory.  
-✅ **Vulkan SDK installed in container:** Used LunarG repo (`lunarg-vulkan-noble`) to install `glslc` and the full Vulkan SDK — required for compiling the Vulkan shaders in llama.cpp.  
-✅ **Gemma 9B running on GPU:** `gemma-2-9b-it-Q4_K_M.gguf` confirmed working with `-ngl 20` (20/43 layers on GPU). Can push to `-ngl 43` for full GPU offload given available VRAM.
+✅ **CPU-only is fastest:** Extensive benchmarking confirmed CPU-only llama.cpp outperforms Vulkan (iGPU) on all model sizes. The Intel iGPU shares RAM bandwidth with the CPU and accesses it through a slower bus — CPU wins. Default build is now CPU-only.  
+✅ **Vulkan tested and documented:** Vulkan build tested with Gemma 2 9B, Gemma 4 E2B/E4B, Qwen 0.5B. All models slower with Vulkan. Instructions preserved in section 3.3 for future reference as drivers improve.  
+✅ **Gemma 4 benchmarked:** New Gemma 4 family (E2B, E4B) tested. Gemma 4 E2B Q4_K_M at ~15 t/s is the recommended daily driver — better quality than Gemma 2 9B at 4x the speed.  
+✅ **Vulkan SDK setup documented:** LunarG repo + `glslc` install process documented for future use.  
+✅ **Dependency conflict documented:** `optimum-intel` vs `transformers 5.x` conflict documented with venv workaround.
 
 ### February 2026
 ✅ **Distrobox AI stack:** Full Intel AI stack (Ollama, llama.cpp, OpenVINO GenAI + NPU, Open WebUI) running inside Ubuntu 24.04 container with zero performance overhead.  
-✅ **Open WebUI:** ChatGPT-like interface with RAG support, connected to llama-server for ~64 tok/s.  
+✅ **Open WebUI:** ChatGPT-like interface with RAG support, connected to llama-server.  
 ✅ **NPU confirmed working:** OpenVINO GenAI on NPU via Distrobox at ~6 tok/s.  
-✅ **llama.cpp:** ~64 tok/s on CPU, binaries exported to host via `distrobox-export`.  
+✅ **llama.cpp:** ~56 tok/s on CPU with Qwen 0.5B, binaries exported to host via `distrobox-export`.  
 ✅ **ai-start.sh:** Single script to select model, launch llama-server and Open WebUI from host.  
 ✅ **Host experience documented:** Appendix covers what works and what doesn't when installing directly on Fedora.
