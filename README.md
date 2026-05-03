@@ -2,10 +2,10 @@
 
 ![Fedora](https://img.shields.io/badge/Fedora-43-blue?logo=fedora&logoColor=white)
 ![Wayland](https://img.shields.io/badge/Wayland-1.22-lightgrey)
-![Intel](https://img.shields.io/badge/Intel-Core_Ultra-lightblue)
+![Intel](https://img.shields.io/badge/Intel-Core_Ultra_200H-lightblue)
 
 > **Target device:** Asus ExpertBook B5405CCA  
-> **Platform:** Intel Core Ultra 7 255H (Meteor Lake)
+> **Platform:** Intel Core Ultra 7 255H (Arrow Lake-H)
 
 A curated, evolving guide for configuring **Linux on the Asus ExpertBook**, tested on **Fedora 43**.
 
@@ -31,8 +31,8 @@ This setup prioritizes:
 
 | Component | Details |
 |-----------|----------|
-| **CPU** | Intel Core Ultra 7 255H (Meteor Lake) |
-| **GPU** | Intel Graphics (Gen12 / Arc Architecture) — ~21 GiB shared VRAM |
+| **CPU** | Intel Core Ultra 7 255H (Arrow Lake-H) |
+| **GPU** | Intel Arc Graphics (ARL) — Device ID 0x7dd1 — ~21 GiB shared VRAM |
 | **NPU** | Intel AI Boost — `intel_vpu` kernel driver |
 | **OS** | Fedora 43 Workstation (Kernel 6.18+) |
 
@@ -79,7 +79,7 @@ crw-rw-rw-. 1 root render 261, 0 ... /dev/accel/accel0
 intel_vpu   360448  0
 ```
 
-> The full AI stack (OpenVINO, Ollama, llama.cpp, Open WebUI) runs inside a Distrobox Ubuntu container — nothing else needs to be installed on the host.
+> On Fedora 43, the `render` group is usually assigned to the user by default, so the `usermod` step may not be strictly necessary. This section is a **recommended verification** to confirm the NPU device is visible before creating the container. The full AI stack (OpenVINO, Ollama, llama.cpp, Open WebUI) runs inside a Distrobox Ubuntu container — nothing else needs to be installed on the host.
 
 ---
 
@@ -125,47 +125,113 @@ intel_vpu   360448  0
 
 ---
 
-### 3.1 Setup: Distrobox Ubuntu Container
+### 3.1 Container Overview
+
+Three dedicated containers isolate each tool's dependencies:
+
+| Container | Purpose | Devices |
+|-----------|---------|---------|
+| `openvino-npu` | OpenVINO + NPU/GPU inference, Gemma 4 | `/dev/accel/accel0`, `/dev/dri` |
+| `ollama` | Ollama service + Open WebUI | `/dev/dri` |
+| `llama-cpp` | llama.cpp CPU build + llama-server | CPU only |
+
+> 💡 The home directory (`~`) is shared with the host across all containers — models placed in `~/Models/` are accessible from any container.
+
+---
+
+#### `openvino-npu` — OpenVINO + NPU
 
 ```bash
 sudo dnf install distrobox podman
-distrobox create --name dev-ai --image ubuntu:24.04
-distrobox enter dev-ai
+
+# Create the container with access to NPU (/dev/accel) and GPU (/dev/dri)
+distrobox create \
+  --name openvino-npu \
+  --image ubuntu:24.04 \
+  --additional-flags "--device /dev/accel/accel0 --device /dev/dri"
+
+distrobox enter openvino-npu
 ```
 
-Inside the container, install the Intel NPU driver stack:
+Inside the container, install the full Intel AI stack:
 
 ```bash
 sudo apt update && sudo apt install -y curl wget git python3 python3-pip cmake gcc g++ zstd libtbb12
 
-# Intel NPU drivers
-cd ~/Downloads
-wget https://github.com/intel/linux-npu-driver/releases/download/v1.28.0/linux-npu-driver-v1.28.0.20251218-20347000698-ubuntu2404.tar.gz
-tar -xf linux-npu-driver-v1.28.0.20251218-20347000698-ubuntu2404.tar.gz
-sudo dpkg -i intel-fw-npu_*.deb intel-level-zero-npu_*.deb intel-driver-compiler-npu_*.deb
+# --- OpenVINO 2026.x via Intel APT repo ---
+wget https://apt.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB
+sudo apt-key add GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB
+echo "deb https://apt.repos.intel.com/openvino ubuntu24 main" | \
+  sudo tee /etc/apt/sources.list.d/intel-openvino.list
+sudo apt update
+sudo apt install -y openvino
 
-# Level Zero
-wget https://github.com/oneapi-src/level-zero/releases/download/v1.24.2/level-zero_1.24.2+u24.04_amd64.deb
-sudo dpkg -i level-zero_*.deb
+# --- Intel GPU compute runtime (enables GPU in OpenVINO) ---
+sudo apt install -y intel-opencl-icd intel-level-zero-gpu
+
+# --- Intel NPU user-space driver v1.32.1 ---
+mkdir -p /tmp/npu-driver && cd /tmp/npu-driver
+wget https://github.com/intel/linux-npu-driver/releases/download/v1.32.1/linux-npu-driver-v1.32.1.20260422-24767473183-ubuntu2404.tar.gz
+tar -xf linux-npu-driver-v1.32.1.20260422-24767473183-ubuntu2404.tar.gz
+sudo dpkg -i intel-fw-npu_*.deb intel-driver-compiler-npu_*.deb intel-level-zero-npu_*.deb
+cd ~ && rm -rf /tmp/npu-driver
+```
+
+### Verify all devices are detected
+
+```bash
+python3 -c "
+import openvino as ov
+core = ov.Core()
+print('OpenVINO version:', ov.__version__)
+print('Devices:', core.available_devices)
+"
+# Expected: Devices: ['CPU', 'GPU', 'NPU']
 ```
 
 ---
 
-### 3.2 Ollama (inside dev-ai)
+### 3.2 Ollama (inside `ollama`)
+
+```bash
+# Create the container (GPU device access for future acceleration)
+distrobox create \
+  --name ollama \
+  --image ubuntu:24.04 \
+  --additional-flags "--device /dev/dri"
+
+distrobox enter ollama
+```
 
 ```bash
 # Inside the container
-curl -fsSL https://ollama.com/install.sh | sh
-ollama pull qwen2.5:0.5b
-ollama pull llama3.2
+sudo apt update && sudo apt install -y curl
 
-# Export binary to host (run once)
+curl -fsSL https://ollama.com/install.sh | sh
+
+# Start Ollama service (keep running in background or a dedicated terminal)
+ollama serve &
+
+# Pull recommended models
+ollama pull qwen2.5:0.5b
+ollama pull gemma3:4b
+
+# Export binary to host (run once — makes 'ollama' available on the host shell)
 distrobox-export --bin /usr/local/bin/ollama
 ```
 
 ---
 
-### 3.3 llama.cpp — CPU-only build (inside dev-ai)
+### 3.3 llama.cpp — CPU-only build (inside `llama-cpp`)
+
+```bash
+# Create the container (CPU only — no device passthrough needed)
+distrobox create \
+  --name llama-cpp \
+  --image ubuntu:24.04
+
+distrobox enter llama-cpp
+```
 
 > **CPU-only is faster than Vulkan on this hardware.** The Intel iGPU shares RAM bandwidth with the CPU — the CPU accesses it more efficiently for LLM inference.
 
@@ -244,7 +310,7 @@ cmake --build build --config Release -j$(nproc)
 
 ---
 
-### 3.4 Open WebUI (inside dev-ai)
+### 3.4 Open WebUI (inside `ollama`)
 
 A full-featured ChatGPT-like interface with built-in RAG support (upload PDFs, documents, web pages as context).
 
@@ -255,19 +321,70 @@ pip install open-webui --break-system-packages
 
 ---
 
-### 3.5 OpenVINO GenAI + NPU (inside dev-ai)
+### 3.5 OpenVINO GenAI + NPU (inside `openvino-npu`)
 
-> ⚠️ **Dependency conflict warning:** `optimum-intel` requires `transformers<4.58` but Open WebUI installs `transformers 5.x`. Use a separate venv to avoid breaking the main environment:
+> ⚠️ **Dependency conflict warning:** Open WebUI installs `transformers 5.x`. Use a separate venv to avoid breaking the main environment:
 
 ```bash
 python3 -m venv ~/venv-openvino
+source ~/venv-openvino/bin/activate
+```
+
+#### 3.5.1 Gemma 4 with optimum-intel (recommended)
+
+Gemma 4 requires the main branch of both `transformers` and `optimum-intel` — the PyPI releases do not support `gemma4` yet (as of May 2026):
+
+```bash
+source ~/venv-openvino/bin/activate
+
+# transformers from source — required for gemma4 model type support
+pip install "git+https://github.com/huggingface/transformers.git" --upgrade
+
+# optimum-intel from source — required for OVModelForVisualCausalLM
+pip install "git+https://github.com/huggingface/optimum-intel.git@main" --upgrade
+
+pip install torchvision Pillow requests
+```
+
+Download the pre-converted OpenVINO model (int4, ~2.5 GB):
+
+```bash
+pip install huggingface_hub
+huggingface-cli download OpenVINO/gemma-4-E4B-IT-int4-ov --local-dir ~/Models/gemma-4-E4B-int4-ov
+```
+
+Run inference on CPU via OpenVINO:
+
+```python
+from optimum.intel.openvino import OVModelForVisualCausalLM
+from transformers import AutoProcessor
+
+model_path = "/home/<user>/Models/gemma-4-E4B-int4-ov"
+
+processor = AutoProcessor.from_pretrained(model_path)
+model = OVModelForVisualCausalLM.from_pretrained(model_path)
+
+messages = [{"role": "user", "content": [{"type": "text", "text": "Explain AI in 2 sentences."}]}]
+text = processor.apply_chat_template(messages, add_generation_prompt=True)
+inputs = processor(text=text, return_tensors="pt")
+input_len = inputs["input_ids"].shape[-1]
+
+output = model.generate(**inputs, max_new_tokens=100, do_sample=False)
+print(processor.decode(output[0][input_len:], skip_special_tokens=True))
+```
+
+> ℹ️ `openvino_genai.VLMPipeline` does **not** work with Gemma 4. The correct class is `OVModelForVisualCausalLM` from `optimum.intel.openvino`.
+
+See `scripts/test-gemma4.py` in this repo for the full ready-to-run script.
+
+#### 3.5.2 Qwen with openvino-genai on NPU
+
+```bash
 source ~/venv-openvino/bin/activate
 pip install "transformers==4.45.0" openvino-genai "optimum[openvino]" optimum-intel
 ```
 
 ```bash
-# Convert model to OpenVINO format
-source ~/venv-openvino/bin/activate
 optimum-cli export openvino \
   --model Qwen/Qwen2.5-0.5B-Instruct \
   --weight-format int8 \
@@ -358,10 +475,11 @@ distrobox-export --bin /usr/bin/node    # CLI binary → appears in ~/.local/bin
 ### 4.4 Useful Commands
 
 ```bash
-distrobox list                   # List all containers
-distrobox stop dev-ai            # Stop a container
-distrobox rm dev-ai              # Remove a container
-distrobox enter dev-ai -- htop   # Run a single command without entering the shell
+distrobox list                           # List all containers
+distrobox stop llama-cpp                 # Stop a container
+distrobox rm llama-cpp                   # Remove a container
+distrobox enter llama-cpp -- htop        # Run a single command without entering the shell
+distrobox enter ollama -- ollama list    # List downloaded Ollama models
 ```
 
 ---
@@ -388,7 +506,9 @@ During initial setup we attempted to install the full Intel AI stack directly on
 
 **What doesn't work on host:**
 - Ollama GPU acceleration — Vulkan support for Intel iGPU generates corrupt output
-- OpenVINO GenAI on NPU — blocked by version mismatch: Fedora ships OpenVINO 2025.1 but `openvino-genai` pip only distributes 2025.4+, which requires `libopenvino.so.2541`. Intel has no RPM repo for 2025.4
+- OpenVINO GenAI on NPU — blocked by version mismatch: Fedora ships OpenVINO 2025.1 but `openvino-genai` pip only distributes 2025.4+, which requires `libopenvino.so.2541`. Intel has no RPM repo for that version.
+
+> **Update (May 2026):** This version mismatch is fully resolved inside the Distrobox container. Installing OpenVINO via Intel's APT repo (`apt.repos.intel.com/openvino ubuntu24`) gives OpenVINO 2026.1.0, which is compatible with the latest `openvino-genai` pip package. No workarounds needed.
 
 **NPU driver workaround (host):**
 
@@ -416,17 +536,29 @@ This makes the NPU visible to OpenVINO, but `openvino-genai` still can't use it 
 
 ## 🗓️ Recent Changes
 
+### May 2026
+✅ **Gemma 4 running via OpenVINO + optimum-intel:** `gemma-4-E4B-IT-int4-ov` (pre-converted OpenVINO int4 model) runs successfully using `OVModelForVisualCausalLM` from `optimum-intel`. Inference confirmed on CPU via OpenVINO.
+✅ **transformers from source required:** The `gemma4` model type is not supported in any PyPI release of `transformers` as of May 2026. Must install `transformers==5.8.0.dev0` from the GitHub main branch.
+✅ **optimum-intel from source required:** PyPI `optimum-intel` pins `transformers<5.1`, breaking compatibility. Install from the GitHub main branch to get `OVModelForVisualCausalLM` working with Gemma 4.
+✅ **`openvino_genai.VLMPipeline` does NOT work for Gemma 4:** Documented explicitly. The correct approach is `OVModelForVisualCausalLM` from `optimum.intel.openvino`.
+✅ **`scripts/test-gemma4.py` added:** Ready-to-run script demonstrating Gemma 4 inference with OpenVINO.
+✅ **Separate containers per tool:** Three dedicated Distrobox containers (`openvino-npu`, `ollama`, `llama-cpp`) isolate dependencies cleanly.
+✅ **Correct OpenVINO install method:** Use Intel's official APT repo (`apt.repos.intel.com/openvino ubuntu24`) — not the Ubuntu 24.04 default repo (ships an old, broken OpenVINO build).
+✅ **GPU compute runtime added:** `intel-opencl-icd` + `intel-level-zero-gpu` packages enable the Arc iGPU in OpenVINO.
+✅ **NPU driver updated to v1.32.1:** New release from GitHub. Same 3-package install: `intel-fw-npu`, `intel-driver-compiler-npu`, `intel-level-zero-npu`.
+✅ **Version mismatch resolved:** `openvino-genai` pip package now compatible with OpenVINO 2026.1.0 — no venv workaround needed for basic OpenVINO usage.
+
 ### April 2026
-✅ **CPU-only is fastest:** Extensive benchmarking confirmed CPU-only llama.cpp outperforms Vulkan (iGPU) on all model sizes. The Intel iGPU shares RAM bandwidth with the CPU and accesses it through a slower bus — CPU wins. Default build is now CPU-only.  
-✅ **Vulkan tested and documented:** Vulkan build tested with Gemma 2 9B, Gemma 4 E2B/E4B, Qwen 0.5B. All models slower with Vulkan. Instructions preserved in section 3.3 for future reference as drivers improve.  
-✅ **Gemma 4 benchmarked:** New Gemma 4 family (E2B, E4B) tested. Gemma 4 E2B Q4_K_M at ~15 t/s is the recommended daily driver — better quality than Gemma 2 9B at 4x the speed.  
-✅ **Vulkan SDK setup documented:** LunarG repo + `glslc` install process documented for future use.  
+✅ **CPU-only is fastest:** Extensive benchmarking confirmed CPU-only llama.cpp outperforms Vulkan (iGPU) on all model sizes. The Intel iGPU shares RAM bandwidth with the CPU and accesses it through a slower bus — CPU wins. Default build is now CPU-only.
+✅ **Vulkan tested and documented:** Vulkan build tested with Gemma 2 9B, Gemma 4 E2B/E4B, Qwen 0.5B. All models slower with Vulkan. Instructions preserved in section 3.3 for future reference as drivers improve.
+✅ **Gemma 4 benchmarked:** New Gemma 4 family (E2B, E4B) tested. Gemma 4 E2B Q4_K_M at ~15 t/s is the recommended daily driver — better quality than Gemma 2 9B at 4x the speed.
+✅ **Vulkan SDK setup documented:** LunarG repo + `glslc` install process documented for future use.
 ✅ **Dependency conflict documented:** `optimum-intel` vs `transformers 5.x` conflict documented with venv workaround.
 
 ### February 2026
-✅ **Distrobox AI stack:** Full Intel AI stack (Ollama, llama.cpp, OpenVINO GenAI + NPU, Open WebUI) running inside Ubuntu 24.04 container with zero performance overhead.  
-✅ **Open WebUI:** ChatGPT-like interface with RAG support, connected to llama-server.  
-✅ **NPU confirmed working:** OpenVINO GenAI on NPU via Distrobox at ~6 tok/s.  
-✅ **llama.cpp:** ~56 tok/s on CPU with Qwen 0.5B, binaries exported to host via `distrobox-export`.  
-✅ **ai-start.sh:** Single script to select model, launch llama-server and Open WebUI from host.  
+✅ **Distrobox AI stack:** Full Intel AI stack (Ollama, llama.cpp, OpenVINO GenAI + NPU, Open WebUI) running inside Ubuntu 24.04 container with zero performance overhead.
+✅ **Open WebUI:** ChatGPT-like interface with RAG support, connected to llama-server.
+✅ **NPU confirmed working:** OpenVINO GenAI on NPU via Distrobox at ~6 tok/s.
+✅ **llama.cpp:** ~56 tok/s on CPU with Qwen 0.5B, binaries exported to host via `distrobox-export`.
+✅ **ai-start.sh:** Single script to select model, launch llama-server and Open WebUI from host.
 ✅ **Host experience documented:** Appendix covers what works and what doesn't when installing directly on Fedora.
