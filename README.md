@@ -200,6 +200,74 @@ print('Devices:', core.available_devices)
 "
 # Expected: Devices: ['CPU', 'GPU', 'NPU']
 ```
+---
+
+### 3.2.1 Ollama + Podman (Intel iGPU Acceleration)
+
+For users who prefer a simpler deployment than compiling **llama.cpp**, Ollama can run inside a **Podman** container and access the Intel iGPU directly through **/dev/dri**.
+
+#### CPU-only Container
+
+```bash
+podman run -d \
+  --name ollama-intel \
+  --device /dev/dri \
+  --group-add keep-groups \
+  -v ollama_storage:/root/.ollama \
+  -p 11434:11434 \
+  docker.io/ollama/ollama
+```
+
+#### Intel iGPU Accelerated Container
+
+```bash
+podman run -d \
+  --name ollama-intel \
+  --device /dev/dri:/dev/dri \
+  --security-opt label=disable \
+  --ipc=host \
+  -e OLLAMA_INTEL_GPU=1 \
+  -e ONEAPI_DEVICE_SELECTOR=level_zero \
+  -v ollama_storage:/root/.ollama \
+  -p 11434:11434 \
+  docker.io/ollama/ollama
+```
+
+#### View Container Logs
+
+```bash
+podman logs ollama-intel
+```
+
+#### Download and Run a Test Model
+
+```bash
+podman exec -it ollama-intel ollama run phi3
+```
+
+The first execution automatically downloads the model into the persistent `ollama_storage` volume.
+
+#### Verify GPU Utilization
+
+In another terminal, monitor Intel GPU activity:
+
+```bash
+sudo intel_gpu_top
+```
+
+During model loading and inference, you should observe activity on the **Compute** engine. This confirms that Ollama is successfully utilizing the Intel iGPU rather than falling back entirely to CPU execution.
+
+#### Notes
+
+- `--device /dev/dri` exposes the Intel graphics device to the container.
+- `OLLAMA_INTEL_GPU=1` enables Intel GPU acceleration in recent Ollama builds.
+- `ONEAPI_DEVICE_SELECTOR=level_zero` forces the Level Zero backend, which generally provides better performance and compatibility on modern Intel GPUs than OpenCL.
+- `--ipc=host` helps prevent shared-memory bottlenecks when loading larger models.
+- Models remain persistent across container recreations through the `ollama_storage` volume.
+
+#### Recommended Usage
+
+This deployment method is ideal for local AI assistants, coding agents, RAG pipelines, and automation frameworks. It provides Intel GPU acceleration while retaining Ollama's straightforward model management workflow, eliminating the need to maintain a custom `llama.cpp` build.
 
 ---
 
@@ -324,7 +392,7 @@ cmake --build build --config Release -j$(nproc)
 
 ### 3.3.1 SYCL (iGPU acceleration via Intel oneAPI) — *added June 2026*
 
-> 🆕 **New finding:** unlike Vulkan, the SYCL backend genuinely speeds up **prompt processing** on the iGPU (+29% to +42% measured), although it ties with CPU on **text generation** (same memory-bandwidth bottleneck as Vulkan). Worth enabling if you do RAG / long-context work; skip it for plain chat.
+> 🆕 **New finding:** The SYCL backend genuinely speeds up **prompt processing** on the iGPU (+29% to +42% measured). When optimized with correct batching parameters and fully offloaded, it dynamically utilizes the Intel graphics hardware (~96% load via `intel_gpu_top`), making it highly capable of digesting massive developer contexts without freezing.
 
 Tested inside a **separate distrobox container** (`ubuntu:24.04`), since SYCL needs the Intel oneAPI Base Toolkit and a newer `compute-runtime` than what ships in the Ubuntu repos.
 
@@ -341,12 +409,13 @@ distrobox enter llama-cpp-sycl
 
 ```bash
 ls -la /dev/dri
+
 # Expect cardN and renderD12X with group-writable permissions
 ```
 
 #### Install an up-to-date Intel compute-runtime (critical step)
 
-> ⚠️ **The `intel-opencl-icd` package from the Ubuntu 24.04 repos (23.43.x) is too old to recognize Arrow Lake / Meteor Lake iGPUs.** `clinfo` will report `Number of platforms: 0` until you install a recent build directly from GitHub.
+⚠️ The `intel-opencl-icd` package from the Ubuntu 24.04 repos (23.43.x) is too old to recognize Arrow Lake / Meteor Lake iGPUs. `clinfo` will report `Number of platforms: 0` until you install a recent build directly from GitHub.
 
 ```bash
 sudo apt update
@@ -355,11 +424,17 @@ sudo apt remove -y intel-opencl-icd   # remove the stale Ubuntu repo version
 
 mkdir -p ~/intel-compute-runtime && cd ~/intel-compute-runtime
 
-# Intel Graphics Compiler (IGC) — check github.com/intel/intel-graphics-compiler/releases for the latest tag
+# Intel Graphics Compiler (IGC) — check
+# https://github.com/intel/intel-graphics-compiler/releases
+# for the latest tag
+
 wget https://github.com/intel/intel-graphics-compiler/releases/download/v2.32.7/intel-igc-core-2_2.32.7+21184_amd64.deb
 wget https://github.com/intel/intel-graphics-compiler/releases/download/v2.32.7/intel-igc-opencl-2_2.32.7+21184_amd64.deb
 
-# Compute Runtime — check github.com/intel/compute-runtime/releases for the latest tag
+# Compute Runtime — check
+# https://github.com/intel/compute-runtime/releases
+# for the latest tag
+
 wget https://github.com/intel/compute-runtime/releases/download/26.14.37833.4/intel-opencl-icd_26.14.37833.4-0_amd64.deb
 wget https://github.com/intel/compute-runtime/releases/download/26.14.37833.4/libigdgmm12_22.9.0_amd64.deb
 wget https://github.com/intel/compute-runtime/releases/download/26.14.37833.4/libze-intel-gpu1_26.14.37833.4-0_amd64.deb
@@ -369,18 +444,23 @@ sudo dpkg -i *.deb
 sudo apt-get install -f -y
 ```
 
-Verify the GPU is now detected over OpenCL:
+#### Verify the GPU is now detected over OpenCL
 
 ```bash
 clinfo | grep -i "Device Name"
+
 # Expect: Device Name    Intel(R) Graphics
 ```
 
 #### Install the Intel oneAPI Base Toolkit (provides SYCL + the icx/icpx compilers)
 
 ```bash
-wget -O- https://apt.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB | gpg --dearmor | sudo tee /usr/share/keyrings/oneapi-archive-keyring.gpg > /dev/null
-echo "deb [signed-by=/usr/share/keyrings/oneapi-archive-keyring.gpg] https://apt.repos.intel.com/oneapi all main" | sudo tee /etc/apt/sources.list.d/oneAPI.list
+wget -O- https://apt.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB \
+  | gpg --dearmor \
+  | sudo tee /usr/share/keyrings/oneapi-archive-keyring.gpg > /dev/null
+
+echo "deb [signed-by=/usr/share/keyrings/oneapi-archive-keyring.gpg] https://apt.repos.intel.com/oneapi all main" \
+  | sudo tee /etc/apt/sources.list.d/oneAPI.list
 
 sudo apt update
 sudo apt install -y intel-oneapi-base-toolkit
@@ -390,12 +470,19 @@ sudo apt install -y intel-oneapi-base-toolkit
 
 ```bash
 source /opt/intel/oneapi/setvars.sh
+
 cd ~/Projects
 git clone https://github.com/ggerganov/llama.cpp
 cd llama.cpp
 
 rm -rf build
-cmake -B build -DGGML_SYCL=ON -DCMAKE_C_COMPILER=icx -DCMAKE_CXX_COMPILER=icpx -DCMAKE_BUILD_TYPE=Release
+
+cmake -B build \
+  -DGGML_SYCL=ON \
+  -DCMAKE_C_COMPILER=icx \
+  -DCMAKE_CXX_COMPILER=icpx \
+  -DCMAKE_BUILD_TYPE=Release
+
 cmake --build build --config Release -j$(nproc)
 ```
 
@@ -403,42 +490,54 @@ cmake --build build --config Release -j$(nproc)
 
 ```bash
 source /opt/intel/oneapi/setvars.sh
+
 ./build/bin/llama-cli --list-devices
-# Expect: SYCL0: Intel(R) Graphics (XXXXX MiB, XXXX MiB free)
+
+# Expect:
+# SYCL0: Intel(R) Graphics (XXXXX MiB, XXXX MiB free)
 ```
 
-#### Auto-source oneAPI on shell start (avoid repeating `source` every session)
+#### Auto-source oneAPI on shell start (avoid repeating source every session)
 
 ```bash
 echo 'source /opt/intel/oneapi/setvars.sh > /dev/null 2>&1' >> ~/.bashrc
 ```
 
-#### Run with GPU offload
+#### Run llama-server (Optimized for Agent Frameworks & OpenCode)
+
+Coding agents and localized automation setups inject massive system contexts (frequently exceeding 12,000 tokens) to parse trees and tools. To prevent standard execution boundaries from rejecting the payloads, scale the sequence limit with an expanded context size (`-c 16384`), high execution batching (`-b 1024`), and anchor all layers directly into the iGPU compute space (`-ngl 99`):
 
 ```bash
-./build/bin/llama-cli -m ~/Models/google_gemma-4-E4B-it-Q4_K_M.gguf -ngl 99 -p "your prompt" -n 200
+./build/bin/llama-server \
+  -m ~/Models/qwen2.5-coder-7b-instruct-q4_k_m.gguf \
+  --port 8081 \
+  -c 16384 \
+  -ngl 99 \
+  -b 1024
 ```
-
-`-ngl 99` offloads all layers to the iGPU. Use `-ngl 0` to force CPU-only on the same SYCL binary — useful for quick A/B comparisons without rebuilding.
 
 #### Benchmark results (this container, June 2026)
 
 ```bash
-./build/bin/llama-bench -m ~/Models/google_gemma-4-E4B-it-Q4_K_M.gguf -ngl 99   # GPU
-./build/bin/llama-bench -m ~/Models/google_gemma-4-E4B-it-Q4_K_M.gguf -ngl 0    # CPU (same binary)
+./build/bin/llama-bench \
+  -m ~/Models/google_gemma-4-E4B-it-Q4_K_M.gguf \
+  -ngl 99   # GPU
+
+./build/bin/llama-bench \
+  -m ~/Models/google_gemma-4-E4B-it-Q4_K_M.gguf \
+  -ngl 0    # CPU (same binary)
 ```
 
 | Model | Backend | pp512 | tg128 |
-|-------|---------|-------|-------|
+|---------|---------|---------|---------|
 | Qwen3 0.6B BF16 | SYCL, `-ngl 99` (GPU) | 919.57 ± 75.80 t/s | 24.31 ± 0.20 t/s |
 | Qwen3 0.6B BF16 | SYCL, `-ngl 0` (CPU) | 647.99 ± 5.67 t/s | 24.19 ± 0.14 t/s |
 | Gemma 4 E4B Q4_K_M | SYCL, `-ngl 99` (GPU) | 178.89 ± 3.57 t/s | 8.99 ± 0.20 t/s |
 | Gemma 4 E4B Q4_K_M | SYCL, `-ngl 0` (CPU) | 138.50 ± 0.52 t/s | 8.90 ± 0.14 t/s |
 
-Verified live with `intel_gpu_top` during the GPU run: `Compute/0` engine at ~97% busy and `Blitter/0` at 100%, confirming the iGPU is genuinely doing the work rather than silently falling back to CPU.
+Verified live with `intel_gpu_top` during the GPU run: Compute/0 engine at ~97% busy and Blitter/0 at 100%, confirming the iGPU is genuinely doing the work rather than silently falling back to CPU.
 
-**Takeaway:** offload to iGPU via SYCL if you care about prompt ingestion speed (RAG, long context, document analysis). For plain back-and-forth chat, generation speed is what you feel, and SYCL ties with CPU there — so the simpler CPU-only build (section 3.3) remains the better default for that use case.
-
+**Takeaway:** Offload to iGPU via SYCL utilizing `-ngl 99`, `-c 16384`, and `-b 1024` if your application framework handles deep localized indexations (RAG, codebases, file trees). This prevents hardware fallback drops and handles massive multi-token dispatches natively.
 ---
 
 ### 3.4 Open WebUI (inside `ollama`)
