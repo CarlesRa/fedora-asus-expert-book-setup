@@ -202,6 +202,37 @@ print('Devices:', core.available_devices)
 ```
 ---
 
+### 3.2 Ollama (inside `ollama`)
+
+```bash
+# Create the container (GPU device access for future acceleration)
+distrobox create \
+  --name ollama \
+  --image ubuntu:24.04 \
+  --additional-flags "--device /dev/dri"
+
+distrobox enter ollama
+```
+
+```bash
+# Inside the container
+sudo apt update && sudo apt install -y curl
+
+curl -fsSL https://ollama.com/install.sh | sh
+
+# Start Ollama service (keep running in background or a dedicated terminal)
+ollama serve &
+
+# Pull recommended models
+ollama pull qwen2.5:0.5b
+ollama pull gemma3:4b
+
+# Export binary to host (run once — makes 'ollama' available on the host shell)
+distrobox-export --bin /usr/local/bin/ollama
+```
+
+---
+
 ### 3.2.1 Ollama + Podman (Intel iGPU Acceleration)
 
 For users who prefer a simpler deployment than compiling **llama.cpp**, Ollama can run inside a **Podman** container and access the Intel iGPU directly through **/dev/dri**.
@@ -268,37 +299,6 @@ During model loading and inference, you should observe activity on the **Compute
 #### Recommended Usage
 
 This deployment method is ideal for local AI assistants, coding agents, RAG pipelines, and automation frameworks. It provides Intel GPU acceleration while retaining Ollama's straightforward model management workflow, eliminating the need to maintain a custom `llama.cpp` build.
-
----
-
-### 3.2 Ollama (inside `ollama`)
-
-```bash
-# Create the container (GPU device access for future acceleration)
-distrobox create \
-  --name ollama \
-  --image ubuntu:24.04 \
-  --additional-flags "--device /dev/dri"
-
-distrobox enter ollama
-```
-
-```bash
-# Inside the container
-sudo apt update && sudo apt install -y curl
-
-curl -fsSL https://ollama.com/install.sh | sh
-
-# Start Ollama service (keep running in background or a dedicated terminal)
-ollama serve &
-
-# Pull recommended models
-ollama pull qwen2.5:0.5b
-ollama pull gemma3:4b
-
-# Export binary to host (run once — makes 'ollama' available on the host shell)
-distrobox-export --bin /usr/local/bin/ollama
-```
 
 ---
 
