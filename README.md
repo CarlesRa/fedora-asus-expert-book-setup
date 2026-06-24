@@ -89,7 +89,7 @@ intel_vpu   360448  0
 
 ### Performance Benchmarks (measured on Core Ultra 7 255H)
 
-> All llama.cpp benchmarks use CPU-only build (no Vulkan). See findings below.
+> CPU and Vulkan benchmarks below use the CPU-only / Vulkan builds. SYCL benchmarks (June 2026) use a separate `llama-cpp-sycl` container — see [3.3.1](#331-sycl-igpu-acceleration-via-intel-oneapi).
 
 | Build | Model | Size | Prompt | Generation |
 |-------|-------|------|--------|------------|
@@ -100,9 +100,19 @@ intel_vpu   360448  0
 | llama.cpp + Vulkan | Gemma 4 E2B Q4_K_M | 2B | 75.1 t/s | 6.9 t/s |
 | llama.cpp + Vulkan | Gemma 4 E4B Q4_K_M | 4B | 48.2 t/s | 5.3 t/s |
 | llama.cpp + Vulkan | Gemma 2 9B Q4_K_M | 9B | 29.2 t/s | 3.7 t/s |
+| llama.cpp + SYCL (`-ngl 99`) | Qwen3 0.6B BF16 | 0.6B | 919.6 t/s | 24.3 t/s |
+| llama.cpp + SYCL (`-ngl 0`, CPU) | Qwen3 0.6B BF16 | 0.6B | 648.0 t/s | 24.2 t/s |
+| llama.cpp + SYCL (`-ngl 99`) | Gemma 4 E4B Q4_K_M | 7.5B | 178.9 t/s | 9.0 t/s |
+| llama.cpp + SYCL (`-ngl 0`, CPU) | Gemma 4 E4B Q4_K_M | 7.5B | 138.5 t/s | 8.9 t/s |
 | OpenVINO GenAI | NPU | — | — | ~6 t/s |
 
-> ⚠️ **Key finding:** Vulkan (iGPU) is **slower than CPU-only** for all model sizes on this hardware. The Intel iGPU uses shared RAM with limited memory bandwidth — the CPU accesses it faster directly. **Use CPU-only build for best performance.**
+> ⚠️ **Key finding (Vulkan, April 2026):** Vulkan (iGPU) is **slower than CPU-only** for all model sizes on this hardware. The Intel iGPU uses shared RAM with limited memory bandwidth — the CPU accesses it faster directly.
+>
+> ⚠️ **Key finding (SYCL, June 2026):** Tested in a Ubuntu 24.04 distrobox container with Intel's `compute-runtime` (26.14.x, built from GitHub — the Ubuntu repo version is too old for Arrow Lake) and the oneAPI Base Toolkit. Same pattern as Vulkan, with a nuance:
+> - **Prompt processing (`pp512`) is genuinely faster on GPU** — +29% on Gemma 4 E4B, +42% on Qwen3 0.6B, both reproducible across two very different model sizes/formats.
+> - **Text generation (`tg128`) shows no real improvement** — within margin of error in both tests (Gemma 4 E4B: 8.99 vs 8.90 t/s; Qwen3 0.6B: 24.31 vs 24.19 t/s).
+> - This confirms the bottleneck is memory bandwidth, not compute: prompt processing is parallelizable and compute-bound (GPU wins), while token-by-token generation is bandwidth-bound on shared RAM (GPU and CPU tie).
+> - **Practical takeaway:** SYCL is worth enabling if your workload involves long prompts / RAG / large context (faster `pp512`), but offers no benefit for plain interactive chat, where generation speed (`tg128`) is what you feel.
 
 ### Recommended models for this hardware
 
@@ -111,6 +121,7 @@ intel_vpu   360448  0
 | Fast & lightweight | Qwen 2.5 0.5B Q4_K_M | ~56 t/s |
 | Best quality/speed balance ⭐ | Gemma 4 E2B Q4_K_M | ~15 t/s |
 | Maximum quality | Gemma 4 E4B Q4_K_M | ~8 t/s |
+| Long-prompt / RAG workloads | Any model + SYCL `-ngl 99` | +30–40% faster prompt ingestion |
 
 ---
 
@@ -127,13 +138,14 @@ intel_vpu   360448  0
 
 ### 3.1 Container Overview
 
-Three dedicated containers isolate each tool's dependencies:
+Dedicated containers isolate each tool's dependencies:
 
 | Container | Purpose | Devices |
 |-----------|---------|---------|
 | `openvino-npu` | OpenVINO + NPU/GPU inference, Gemma 4 | `/dev/accel/accel0`, `/dev/dri` |
 | `ollama` | Ollama service + Open WebUI | `/dev/dri` |
 | `llama-cpp` | llama.cpp CPU build + llama-server | CPU only |
+| `llama-cpp-sycl` *(new, June 2026)* | llama.cpp + SYCL (iGPU) build | `/dev/dri` |
 
 > 💡 The home directory (`~`) is shared with the host across all containers — models placed in `~/Models/` are accessible from any container.
 
@@ -233,7 +245,7 @@ distrobox create \
 distrobox enter llama-cpp
 ```
 
-> **CPU-only is faster than Vulkan on this hardware.** The Intel iGPU shares RAM bandwidth with the CPU — the CPU accesses it more efficiently for LLM inference.
+> **CPU-only is faster than Vulkan on this hardware** for text generation. The Intel iGPU shares RAM bandwidth with the CPU — the CPU accesses it more efficiently for token-by-token generation. See [3.3.1](#331-sycl-igpu-acceleration-via-intel-oneapi) for the SYCL nuance: GPU *does* help with prompt processing.
 
 ```bash
 # Inside the container
@@ -241,7 +253,7 @@ cd ~/Projects
 git clone https://github.com/ggerganov/llama.cpp
 cd llama.cpp
 
-# Build CPU-only (fastest for this hardware)
+# Build CPU-only (fastest for generation on this hardware)
 rm -rf build
 cmake -B build
 cmake --build build --config Release -j$(nproc)
@@ -290,7 +302,7 @@ wget https://huggingface.co/bartowski/google_gemma-4-E4B-it-GGUF/resolve/main/go
 
 #### About Vulkan (iGPU acceleration)
 
-Vulkan was tested extensively. Despite offloading all 43/43 layers to the Intel iGPU (`Intel Graphics ARL`, ~21 GiB shared VRAM), performance was **consistently worse than CPU-only** across all model sizes. The bottleneck is memory bandwidth — the iGPU shares RAM with the CPU and accesses it through a slower internal bus. CPU-only build wins on this hardware.
+Vulkan was tested extensively. Despite offloading all 43/43 layers to the Intel iGPU (`Intel Graphics ARL`, ~21 GiB shared VRAM), performance was **consistently worse than CPU-only** across all model sizes. The bottleneck is memory bandwidth — the iGPU shares RAM with the CPU and accesses it through a slower internal bus. CPU-only build wins on this hardware for token generation.
 
 To build with Vulkan if needed for future testing:
 
@@ -307,6 +319,125 @@ rm -rf build
 cmake -B build -DGGML_VULKAN=ON
 cmake --build build --config Release -j$(nproc)
 ```
+
+---
+
+### 3.3.1 SYCL (iGPU acceleration via Intel oneAPI) — *added June 2026*
+
+> 🆕 **New finding:** unlike Vulkan, the SYCL backend genuinely speeds up **prompt processing** on the iGPU (+29% to +42% measured), although it ties with CPU on **text generation** (same memory-bandwidth bottleneck as Vulkan). Worth enabling if you do RAG / long-context work; skip it for plain chat.
+
+Tested inside a **separate distrobox container** (`ubuntu:24.04`), since SYCL needs the Intel oneAPI Base Toolkit and a newer `compute-runtime` than what ships in the Ubuntu repos.
+
+```bash
+distrobox create \
+  --name llama-cpp-sycl \
+  --image ubuntu:24.04 \
+  --additional-flags "--device /dev/dri"
+
+distrobox enter llama-cpp-sycl
+```
+
+#### Verify the iGPU is visible inside the container
+
+```bash
+ls -la /dev/dri
+# Expect cardN and renderD12X with group-writable permissions
+```
+
+#### Install an up-to-date Intel compute-runtime (critical step)
+
+> ⚠️ **The `intel-opencl-icd` package from the Ubuntu 24.04 repos (23.43.x) is too old to recognize Arrow Lake / Meteor Lake iGPUs.** `clinfo` will report `Number of platforms: 0` until you install a recent build directly from GitHub.
+
+```bash
+sudo apt update
+sudo apt install -y clinfo
+sudo apt remove -y intel-opencl-icd   # remove the stale Ubuntu repo version
+
+mkdir -p ~/intel-compute-runtime && cd ~/intel-compute-runtime
+
+# Intel Graphics Compiler (IGC) — check github.com/intel/intel-graphics-compiler/releases for the latest tag
+wget https://github.com/intel/intel-graphics-compiler/releases/download/v2.32.7/intel-igc-core-2_2.32.7+21184_amd64.deb
+wget https://github.com/intel/intel-graphics-compiler/releases/download/v2.32.7/intel-igc-opencl-2_2.32.7+21184_amd64.deb
+
+# Compute Runtime — check github.com/intel/compute-runtime/releases for the latest tag
+wget https://github.com/intel/compute-runtime/releases/download/26.14.37833.4/intel-opencl-icd_26.14.37833.4-0_amd64.deb
+wget https://github.com/intel/compute-runtime/releases/download/26.14.37833.4/libigdgmm12_22.9.0_amd64.deb
+wget https://github.com/intel/compute-runtime/releases/download/26.14.37833.4/libze-intel-gpu1_26.14.37833.4-0_amd64.deb
+wget https://github.com/intel/compute-runtime/releases/download/26.14.37833.4/intel-ocloc_26.14.37833.4-0_amd64.deb
+
+sudo dpkg -i *.deb
+sudo apt-get install -f -y
+```
+
+Verify the GPU is now detected over OpenCL:
+
+```bash
+clinfo | grep -i "Device Name"
+# Expect: Device Name    Intel(R) Graphics
+```
+
+#### Install the Intel oneAPI Base Toolkit (provides SYCL + the icx/icpx compilers)
+
+```bash
+wget -O- https://apt.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB | gpg --dearmor | sudo tee /usr/share/keyrings/oneapi-archive-keyring.gpg > /dev/null
+echo "deb [signed-by=/usr/share/keyrings/oneapi-archive-keyring.gpg] https://apt.repos.intel.com/oneapi all main" | sudo tee /etc/apt/sources.list.d/oneAPI.list
+
+sudo apt update
+sudo apt install -y intel-oneapi-base-toolkit
+```
+
+#### Build llama.cpp with SYCL
+
+```bash
+source /opt/intel/oneapi/setvars.sh
+cd ~/Projects
+git clone https://github.com/ggerganov/llama.cpp
+cd llama.cpp
+
+rm -rf build
+cmake -B build -DGGML_SYCL=ON -DCMAKE_C_COMPILER=icx -DCMAKE_CXX_COMPILER=icpx -DCMAKE_BUILD_TYPE=Release
+cmake --build build --config Release -j$(nproc)
+```
+
+#### Verify the device shows up
+
+```bash
+source /opt/intel/oneapi/setvars.sh
+./build/bin/llama-cli --list-devices
+# Expect: SYCL0: Intel(R) Graphics (XXXXX MiB, XXXX MiB free)
+```
+
+#### Auto-source oneAPI on shell start (avoid repeating `source` every session)
+
+```bash
+echo 'source /opt/intel/oneapi/setvars.sh > /dev/null 2>&1' >> ~/.bashrc
+```
+
+#### Run with GPU offload
+
+```bash
+./build/bin/llama-cli -m ~/Models/google_gemma-4-E4B-it-Q4_K_M.gguf -ngl 99 -p "your prompt" -n 200
+```
+
+`-ngl 99` offloads all layers to the iGPU. Use `-ngl 0` to force CPU-only on the same SYCL binary — useful for quick A/B comparisons without rebuilding.
+
+#### Benchmark results (this container, June 2026)
+
+```bash
+./build/bin/llama-bench -m ~/Models/google_gemma-4-E4B-it-Q4_K_M.gguf -ngl 99   # GPU
+./build/bin/llama-bench -m ~/Models/google_gemma-4-E4B-it-Q4_K_M.gguf -ngl 0    # CPU (same binary)
+```
+
+| Model | Backend | pp512 | tg128 |
+|-------|---------|-------|-------|
+| Qwen3 0.6B BF16 | SYCL, `-ngl 99` (GPU) | 919.57 ± 75.80 t/s | 24.31 ± 0.20 t/s |
+| Qwen3 0.6B BF16 | SYCL, `-ngl 0` (CPU) | 647.99 ± 5.67 t/s | 24.19 ± 0.14 t/s |
+| Gemma 4 E4B Q4_K_M | SYCL, `-ngl 99` (GPU) | 178.89 ± 3.57 t/s | 8.99 ± 0.20 t/s |
+| Gemma 4 E4B Q4_K_M | SYCL, `-ngl 0` (CPU) | 138.50 ± 0.52 t/s | 8.90 ± 0.14 t/s |
+
+Verified live with `intel_gpu_top` during the GPU run: `Compute/0` engine at ~97% busy and `Blitter/0` at 100%, confirming the iGPU is genuinely doing the work rather than silently falling back to CPU.
+
+**Takeaway:** offload to iGPU via SYCL if you care about prompt ingestion speed (RAG, long context, document analysis). For plain back-and-forth chat, generation speed is what you feel, and SYCL ties with CPU there — so the simpler CPU-only build (section 3.3) remains the better default for that use case.
 
 ---
 
@@ -535,6 +666,14 @@ This makes the NPU visible to OpenVINO, but `openvino-genai` still can't use it 
 ---
 
 ## 🗓️ Recent Changes
+
+### June 2026
+✅ **SYCL iGPU backend tested for llama.cpp:** New `llama-cpp-sycl` distrobox container built with Intel oneAPI Base Toolkit + `-DGGML_SYCL=ON`. `--list-devices` correctly reports the Arrow Lake-P iGPU (`SYCL0: Intel(R) Graphics`).
+✅ **Stale Ubuntu compute-runtime identified as root cause of "0 platforms":** The `intel-opencl-icd` package in Ubuntu 24.04 repos (23.43.x) doesn't recognize Arrow Lake/Meteor Lake iGPUs. Fixed by installing a current `compute-runtime` (26.14.x) + IGC (2.32.7) directly from Intel's GitHub releases.
+✅ **Benchmarked SYCL vs CPU on two models:** Qwen3 0.6B BF16 and Gemma 4 E4B Q4_K_M, same binary, `-ngl 99` vs `-ngl 0`.
+✅ **Key finding — SYCL helps prompt processing, not generation:** `pp512` is +29% to +42% faster on GPU (compute-bound, parallelizable). `tg128` ties with CPU within margin of error in both tests (bandwidth-bound, shared RAM). Same root cause documented for Vulkan in April 2026, but unlike Vulkan, SYCL does deliver a real win on the prompt-processing side.
+✅ **Verified GPU utilization with `intel_gpu_top`:** Confirmed `Compute/0` engine at ~97% busy during SYCL inference, ruling out silent CPU fallback.
+✅ **Practical guidance added:** Use SYCL `-ngl 99` for RAG / long-context / document-heavy workloads. Stick to the CPU-only build (section 3.3) for plain interactive chat, where generation speed is what matters and SYCL offers no advantage.
 
 ### May 2026
 ✅ **Gemma 4 running via OpenVINO + optimum-intel:** `gemma-4-E4B-IT-int4-ov` (pre-converted OpenVINO int4 model) runs successfully using `OVModelForVisualCausalLM` from `optimum-intel`. Inference confirmed on CPU via OpenVINO.
